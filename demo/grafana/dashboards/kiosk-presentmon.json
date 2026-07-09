@@ -30,12 +30,16 @@
       ]
     },
     {
-      "title": "Displayed FPS",
+      "title": "Displayed FPS — avg / 1% low / 0.1% low / best",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "axisLabel": "fps" } } },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "rate(presentmon_frames_displayed_total{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}" }
+        { "expr": "rate(presentmon_frames_displayed_total{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} avg" },
+        { "expr": "1000 / histogram_quantile(0.99, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[2m])))", "legendFormat": "{{instance}} 1% low" },
+        { "expr": "1000 / histogram_quantile(0.999, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[2m])))", "legendFormat": "{{instance}} 0.1% low" },
+        { "expr": "1000 / histogram_quantile(0.01, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[2m])))", "legendFormat": "{{instance}} best" }
       ]
     },
     {
