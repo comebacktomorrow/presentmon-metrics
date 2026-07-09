@@ -40,8 +40,9 @@ internal sealed class PollerService : BackgroundService
     private readonly Histogram _frameTime;
     private readonly Histogram _displayedTime;
     private readonly Histogram _displayedFpsHist;
-    private readonly Counter _presented;
-    private readonly Counter _displayed;
+    // Presented/displayed frame COUNTS come free from the histogram _count fields
+    // (presentmon_frame_time_ms_count = presented, presentmon_displayed_time_ms_count
+    // = displayed) — no separate counters needed. Only dropped needs its own.
     private readonly Counter _dropped;
     private readonly Gauge _fps;
     private readonly Gauge _up;
@@ -84,10 +85,6 @@ internal sealed class PollerService : BackgroundService
         _displayedFpsHist = f.CreateHistogram("presentmon_displayed_fps_hist",
             "Distribution of instantaneous displayed fps (1000/displayed_time) per frame; render as a heatmap.",
             new HistogramConfiguration { Buckets = FpsBuckets, LabelNames = labels });
-        _presented = f.CreateCounter("presentmon_frames_presented_total",
-            "Frames presented (all frames in the stream).", labels);
-        _displayed = f.CreateCounter("presentmon_frames_displayed_total",
-            "Frames that reached the screen (not dropped).", labels);
         _dropped = f.CreateCounter("presentmon_frames_dropped_total",
             "Frames dropped (presented but never displayed).", labels);
 
@@ -96,8 +93,6 @@ internal sealed class PollerService : BackgroundService
         // panels/alerts break until the first event.
         _up.WithLabels(_app).Set(0);
         _fps.WithLabels(_app).Set(0);
-        _presented.WithLabels(_app).Inc(0);
-        _displayed.WithLabels(_app).Inc(0);
         _dropped.WithLabels(_app).Inc(0);
         _frameTime.WithLabels(_app);
         _displayedTime.WithLabels(_app);
@@ -137,14 +132,12 @@ internal sealed class PollerService : BackgroundService
                     {
                         if (IsSane(frame.FrameTimeMs))
                             _frameTime.WithLabels(_app).Observe(frame.FrameTimeMs);
-                        _presented.WithLabels(_app).Inc();
                         if (frame.Dropped)
                         {
                             _dropped.WithLabels(_app).Inc();
                         }
                         else
                         {
-                            _displayed.WithLabels(_app).Inc();
                             displayedThisCycle++;
                             if (IsSane(frame.DisplayedTimeMs) && frame.DisplayedTimeMs > 0)
                             {

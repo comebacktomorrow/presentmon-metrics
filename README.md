@@ -38,12 +38,14 @@ signage process by name and re-tracks automatically when it restarts.
 | `presentmon_displayed_time_ms` | histogram | on-screen interval per displayed frame (ms) — the smoothness signal |
 | `presentmon_frame_time_ms` | histogram | CPU frame time per frame (ms) — diagnostic (CPU jitter vs display cadence) |
 | `presentmon_displayed_fps_hist` | histogram | instantaneous displayed fps per frame, fps-bucketed — render as a heatmap |
-| `presentmon_displayed_fps` | gauge | glanceable instantaneous fps (jittery; `rate()` of the counter is authoritative) |
-| `presentmon_frames_presented_total` | counter | all frames in the stream |
-| `presentmon_frames_displayed_total` | counter | frames that reached the screen |
+| `presentmon_displayed_fps` | gauge | glanceable instantaneous fps (jittery; `rate()` of a histogram `_count` is authoritative) |
 | `presentmon_frames_dropped_total` | counter | frames dropped (presented, never displayed) |
 
 All carry an `app` label. `instance`/host come from the Prometheus scrape config.
+
+Frame **counts** come free from the histogram `_count` fields — no separate
+counters: presented = `presentmon_frame_time_ms_count`, displayed =
+`presentmon_displayed_time_ms_count`. Only `dropped` needs its own counter.
 
 ### Grafana queries (any window, chosen at query time)
 
@@ -51,8 +53,8 @@ All carry an `app` label. `instance`/host come from the Prometheus scrape config
 # Frame-time p99 over the last 5m — the stutter SLO
 histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_displayed_time_ms_bucket[5m])))
 
-# Displayed FPS (avg) — and 1% low, the stutter signal
-rate(presentmon_frames_displayed_total[1m])
+# Displayed FPS (avg = rate of the displayed-frame count) — and 1% low, the stutter signal
+rate(presentmon_displayed_time_ms_count[1m])
 1000 / histogram_quantile(0.99, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket[2m])))
 
 # FPS distribution as a heatmap panel (format: heatmap, calculate: false)
@@ -61,8 +63,8 @@ sum by (le) (rate(presentmon_displayed_fps_hist_bucket[$__rate_interval]))
 # Dropped frames per minute
 increase(presentmon_frames_dropped_total[1m])
 
-# Drop ratio (%)
-100 * rate(presentmon_frames_dropped_total[5m]) / rate(presentmon_frames_presented_total[5m])
+# Drop ratio (%) — denominator = presented = frame_time_ms_count
+100 * rate(presentmon_frames_dropped_total[5m]) / rate(presentmon_frame_time_ms_count[5m])
 ```
 
 ## Demo in two minutes (no Windows box)
