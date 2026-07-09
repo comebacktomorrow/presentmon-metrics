@@ -7,14 +7,14 @@
     <RootNamespace>KioskPresentMonExporter</RootNamespace>
     <AssemblyName>kiosk-presentmon-exporter</AssemblyName>
     <!-- Self-contained single-file publish so the kiosks need no .NET runtime installed.
-         Publish:  dotnet publish -c Release -r win-x64 --self-contained true \
-                     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -->
+         See README for the exact publish command. -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Platforms>x64</Platforms>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="prometheus-net" Version="8.2.1" />
+    <PackageReference Include="prometheus-net.AspNetCore" Version="8.2.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
   </ItemGroup>
