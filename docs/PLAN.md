@@ -32,8 +32,10 @@ composition timing is bypassed by fullscreen/flip — leaving the OS present lay
 | P/Invoke layer (`PresentMonInterop.cs`) | ✅ written — ⬜ unverified on Windows |
 | Frame-query drain + GPU dynamic query (`PresentMonSession.cs`) | ✅ written — ⬜ unverified |
 | Exporter host: histograms + counters + poll loop (`Program.cs`) | ✅ written |
-| Compile on dev box (192.168.99.100) | ⬜ **next** (awaiting SSH) |
-| Smoke test on notepad kiosk VM (192.168.100.109) | ⬜ after compile |
+| Compile + self-contained publish on dev box (192.168.99.100) | ✅ builds clean (net8 8.0.422); fixed 2 bugs |
+| Interop/runtime verified: pmOpenSession/RegisterFrameQuery/GPU query, /metrics 200 | ✅ on dev box |
+| Grafana pipeline (Prometheus scrape → dashboard → PromQL) | ✅ validated via `demo/` + sample-data generator |
+| Real frame capture (histogram/counter values) | ⬜ **blocked**: dev box is Parsec/virtual-display → no capturable presents. Needs a real-display target (kiosk VM, creds pending) |
 | Grafana dashboard | 🟡 skeleton in `grafana/` |
 | Prometheus scrape config + fleet rollout | ⬜ pending |
 | Release (`--prerelease` → promote) | ⬜ pending |
@@ -57,6 +59,19 @@ composition timing is bypassed by fullscreen/flip — leaving the OS present lay
 6. **Loader vs direct DLL.** Decide `PresentMonAPI2.dll` (service-registered) vs
    `PresentMonAPI2Loader.dll` (shim). Direct DLL assumed; switch the const in
    `PresentMonInterop.cs` if the loader is cleaner for packaging.
+
+## Findings from dev-box bring-up (2026-07-09)
+
+- **PresentMon can't capture presents in a remote/virtual-display session.** On
+  the dev box (accessed via Parsec + a Virtual Display Adapter), the official
+  PresentMon console captured **zero frames system-wide** even with a WebGL app
+  actively GPU-rendering — the "present to screen" goes out the remote-capture
+  path, not a DXGI flip ETW sees. **Implication for the fleet: kiosks must present
+  to a real/local display.** Confirm the production kiosks aren't rendered through
+  any remote/virtual-display layer, or this captures nothing.
+- **GPU telemetry needs a real adapter deviceId.** The box has an NVIDIA A2000
+  yet GPU metrics registered as unavailable with `deviceId 0` — confirming the
+  introspection-API follow-up (resolve the adapter id) rather than hardcoding 0.
 
 ## Resolved
 

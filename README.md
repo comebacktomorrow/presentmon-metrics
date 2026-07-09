@@ -60,13 +60,28 @@ increase(presentmon_frames_dropped_total[1m])
 100 * rate(presentmon_frames_dropped_total[5m]) / rate(presentmon_frames_presented_total[5m])
 ```
 
+## Demo in two minutes (no Windows box)
+
+```bash
+cd demo && docker compose up
+# → http://localhost:3000/d/kiosk-presentmon   (anonymous admin)
+```
+
+Brings up Prometheus + Grafana with the dashboard provisioned, fed by a bundled
+sample-data generator (`demo/frame_sim.py`) that emits the exporter's exact
+metrics with realistic, moving frame data — so every panel populates
+immediately. To drive it from a real exporter instead, edit
+`demo/prometheus/prometheus.yml` (remove the `frame-sim` target, point at your
+kiosk) and drop the `frame-sim` service.
+
 ## Repository layout
 
 | Path | What |
 |---|---|
 | `src/KioskPresentMonExporter/` | the exporter (.NET 8 Windows service) |
 | `src/KioskPresentMonExporter/PresentMonInterop.cs` | P/Invoke to PresentMonAPI2.dll |
-| `src/KioskPresentMonExporter/PresentMonSession.cs` | dynamic-query lifecycle |
+| `src/KioskPresentMonExporter/PresentMonSession.cs` | frame-query drain + GPU dynamic query |
+| `demo/` | self-contained Prometheus + Grafana + sample-data generator |
 | `grafana/` | dashboard JSON for the Git-Sync dashboards repo |
 | `docs/PLAN.md` | architecture, state, and the verify-on-Windows checklist |
 
