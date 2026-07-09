@@ -4,9 +4,15 @@ groups:
       # THE freeze alert: the app process is alive but producing no frames —
       # crash-to-dialog, hang, or GPU TDR aftermath. "healthy but dead."
       # Requires presentmon to target the SAME app kiosk-scripts manages.
+      #
+      # for: MUST stay >= ~1m. When the exporter service restarts (any version/
+      # config reconcile) it comes up with no tracked PID and sweeps the app's
+      # candidate PIDs to find the presenter — ~30s for a multi-process app like
+      # Chrome, +one scrape interval. During that window presentmon_up=0 while
+      # kiosk_app_up=1, i.e. this exact condition. 3m rides over it with margin.
       - alert: KioskAppFrozen
         expr: (kiosk_app_up == 1) and on(instance) (presentmon_up == 0)
-        for: 2m
+        for: 3m
         labels:
           severity: critical
         annotations:
