@@ -6,3 +6,23 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+
+  # Aliases under the uids the imported kiosk-fleet dashboards reference, so they
+  # drop in unchanged and resolve against the local sink.
+  - name: Grafana Cloud Prom (local alias)
+    type: prometheus
+    uid: grafanacloud-prom
+    access: proxy
+    url: http://prometheus:9090
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+
+  - name: Grafana Cloud Logs (local alias)
+    type: loki
+    uid: grafanacloud-logs
+    access: proxy
+    url: http://loki:3100

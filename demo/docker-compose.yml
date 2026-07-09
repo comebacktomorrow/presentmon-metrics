@@ -12,11 +12,20 @@ services:
   prometheus:
     image: prom/prometheus:latest
     ports: ["9090:9090"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver   # accept Alloy remote_write pushes (edge dev box)
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on: [frame-sim]
+
+  loki:
+    image: grafana/loki:latest
+    ports: ["3101:3100"]   # local log sink for the edge dev box's Alloy (3100 was taken)
 
   grafana:
     image: grafana/grafana:latest
@@ -25,7 +34,9 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=xzibit-kiosktimeline-panel
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - /Users/davidtilley/kiosk-timeline/plugin/xzibit-kiosktimeline-panel:/var/lib/grafana/plugins/xzibit-kiosktimeline-panel:ro
     depends_on: [prometheus]

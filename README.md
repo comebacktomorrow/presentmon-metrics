@@ -113,8 +113,24 @@ sc.exe start presentmon-metrics
 # 4. Point Prometheus at http://localhost:9110/metrics
 ```
 
-Config via `appsettings.json` (or `Exporter__*` env vars): `TargetProcessName`
-(no `.exe`) or `TargetProcessId`, `ListenPort`, `PollIntervalMs`.
+Config via `appsettings.json` (or `Exporter__*` env vars / `--Exporter:...` args):
+`TargetProcessName` (no `.exe`) or `TargetProcessId`, `ListenPort`, `PollIntervalMs`.
+
+**Which metrics to emit** (`up` and `frames_dropped_total` are always on):
+
+| `Exporter:Metrics:*` | Default | Metric |
+|---|---|---|
+| `FrameTimeMs` | true | `presentmon_frame_time_ms` (CPU frame time histogram) |
+| `DisplayedTimeMs` | true | `presentmon_displayed_time_ms` (on-screen interval, ms) |
+| `DisplayedFpsHist` | true | `presentmon_displayed_fps_hist` (instantaneous fps; heatmap) |
+| `FrameTimeBucketsMs` | tuned | override ms bucket bounds (array) |
+| `FpsBuckets` | tuned | override fps bucket bounds (array) |
+
+This controls what the exporter *emits*; what actually *ships* to a backend is a
+separate concern (your scrape config / relabel keep-list). Disable a histogram
+only if you won't want it at all — `displayed_time_ms` percentiles can also be
+derived from `displayed_fps_hist` (`1000 / histogram_quantile(q, …_fps_hist_bucket)`),
+so it's optional, not required.
 
 ## Status
 

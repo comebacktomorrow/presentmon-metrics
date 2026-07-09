@@ -12,7 +12,9 @@
         "datasource": { "type": "prometheus", "uid": "prometheus" },
         "query": "label_values(presentmon_up, instance)",
         "includeAll": true,
-        "multi": true
+        "multi": true,
+        "refresh": 1,
+        "current": { "text": "All", "value": "$__all", "selected": true }
       }
     ]
   },
@@ -30,20 +32,18 @@
       ]
     },
     {
-      "title": "Displayed FPS — avg / 1% low / 0.1% low / best",
+      "title": "Displayed FPS (rolling avg — exact, from the frame counter)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "none", "custom": { "axisLabel": "fps" } } },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "rate(presentmon_displayed_time_ms_count{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} avg" },
-        { "expr": "1000 / histogram_quantile(0.99, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[2m])))", "legendFormat": "{{instance}} 1% low" },
-        { "expr": "1000 / histogram_quantile(0.999, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[2m])))", "legendFormat": "{{instance}} 0.1% low" },
-        { "expr": "1000 / histogram_quantile(0.01, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[2m])))", "legendFormat": "{{instance}} best" }
+        { "expr": "rate(presentmon_displayed_fps_hist_count{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} displayed fps" },
+        { "expr": "rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} presented fps" }
       ]
     },
     {
-      "title": "Frame time p99 (ms) — on-screen cadence, over 5m",
+      "title": "Frame time (ms) — p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [
@@ -51,8 +51,9 @@
       ] } } },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} displayed p99" },
-        { "expr": "histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_frame_time_ms_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} cpu p99" }
+        { "expr": "1000 / histogram_quantile(0.50, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} p50" },
+        { "expr": "1000 / histogram_quantile(0.01, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} p99" },
+        { "expr": "1000 / histogram_quantile(0.001, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} p99.9" }
       ]
     },
     {
@@ -71,7 +72,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}" }
+        { "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}", "range": true, "refId": "A" }
       ],
       "options": {
         "calculate": false,

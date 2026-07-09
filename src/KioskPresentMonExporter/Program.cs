@@ -14,6 +14,21 @@ public sealed class ExporterOptions
     public int ListenPort { get; set; } = 9110;
     public uint FrameBatchSize { get; set; } = 512;   // frames drained per pmConsumeFrames call
     public int PollIntervalMs { get; set; } = 1000;   // how often we drain the frame stream
+
+    // Which metric families to EMIT. `up` and frames_dropped_total are always on.
+    // What actually ships to a backend is a separate concern (scrape/keep-list);
+    // this controls what the exporter exposes at all. All default on.
+    public MetricsOptions Metrics { get; set; } = new();
+}
+
+public sealed class MetricsOptions
+{
+    public bool FrameTimeMs { get; set; } = true;       // CPU frame time histogram
+    public bool DisplayedTimeMs { get; set; } = true;   // on-screen interval histogram (ms)
+    public bool DisplayedFpsHist { get; set; } = true;  // instantaneous fps histogram (heatmap)
+    // Optional bucket overrides; null/empty => built-in tuned defaults.
+    public double[]? FrameTimeBucketsMs { get; set; }
+    public double[]? FpsBuckets { get; set; }
 }
 
 public static class Program
@@ -37,25 +52,25 @@ internal sealed class PollerService : BackgroundService
     // Own registry so ONLY presentmon_* is exposed — no dotnet_/process_/kestrel_
     // default-collector noise (which is pure overhead across a fleet).
     private readonly CollectorRegistry _registry;
-    private readonly Histogram _frameTime;
-    private readonly Histogram _displayedTime;
-    private readonly Histogram _displayedFpsHist;
-    // Presented/displayed frame COUNTS come free from the histogram _count fields
-    // (presentmon_frame_time_ms_count = presented, presentmon_displayed_time_ms_count
-    // = displayed) — no separate counters needed. Only dropped needs its own.
+    // Histograms are OPTIONAL (per Exporter:Metrics config) — null when disabled.
+    // Their _count fields double as frame counts (frame_time_ms_count = presented,
+    // displayed_*_count = displayed); `dropped` is the only count needing its own metric.
+    private readonly Histogram? _frameTime;
+    private readonly Histogram? _displayedTime;
+    private readonly Histogram? _displayedFpsHist;
     private readonly Counter _dropped;
-    private readonly Gauge _fps;
     private readonly Gauge _up;
 
-    // Buckets in ms, tuned around 60 Hz (16.7) and 30 Hz (33.3).
-    private static readonly double[] FrameTimeBuckets =
-        { 6, 8, 10, 12, 14, 16.7, 20, 25, 33.3, 50, 66.7, 100, 250, 500 };
+    // Default buckets in ms. DENSE around common refresh rates (8.3=120Hz, 16.7=60Hz)
+    // so the mass doesn't collapse into one wide bucket (bad histogram_quantile interp),
+    // plus finer resolution through the stutter region. Override via Exporter:Metrics:FrameTimeBucketsMs.
+    private static readonly double[] DefaultFrameTimeBuckets =
+        { 4, 6, 8, 8.3, 10, 12, 14, 15, 16, 16.7, 17, 18, 20, 22, 25, 28, 33.3, 40, 50, 66.7, 100, 200, 500 };
 
-    // Buckets in fps (1000/frametime), for the intuitive fps heatmap. Covers the
-    // signage-relevant range; a locked-60 player clusters at 60 and smears toward
-    // 30/24 during stutter.
-    private static readonly double[] FpsBuckets =
-        { 5, 10, 15, 20, 24, 30, 40, 48, 50, 60, 72, 90, 120, 144, 240 };
+    // Default buckets in fps. Dense around 60 (+ 30/24 stutter), covers 120/144 Hz.
+    // Override via Exporter:Metrics:FpsBuckets.
+    private static readonly double[] DefaultFpsBuckets =
+        { 10, 20, 24, 28, 30, 40, 48, 50, 55, 58, 60, 72, 90, 110, 120, 144, 240 };
 
     public PollerService(IOptions<ExporterOptions> opt, ILogger<PollerService> log)
     {
@@ -72,31 +87,36 @@ internal sealed class PollerService : BackgroundService
         var f = Metrics.WithCustomRegistry(_registry);
         var labels = new[] { "app" };
 
+        var frameBuckets = (_opt.Metrics.FrameTimeBucketsMs is { Length: > 0 } fb) ? fb : DefaultFrameTimeBuckets;
+        var fpsBuckets   = (_opt.Metrics.FpsBuckets is { Length: > 0 } pb) ? pb : DefaultFpsBuckets;
+
         _up = f.CreateGauge("presentmon_up",
             "1 if the target process is tracked and producing frames, else 0.", labels);
-        _fps = f.CreateGauge("presentmon_displayed_fps",
-            "Displayed frames in the last poll interval, as frames/sec (glanceable; rate() of the counter is authoritative).", labels);
-        _frameTime = f.CreateHistogram("presentmon_frame_time_ms",
-            "CPU frame time per frame (ms).",
-            new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = labels });
-        _displayedTime = f.CreateHistogram("presentmon_displayed_time_ms",
-            "On-screen interval per displayed frame (ms).",
-            new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = labels });
-        _displayedFpsHist = f.CreateHistogram("presentmon_displayed_fps_hist",
-            "Distribution of instantaneous displayed fps (1000/displayed_time) per frame; render as a heatmap.",
-            new HistogramConfiguration { Buckets = FpsBuckets, LabelNames = labels });
         _dropped = f.CreateCounter("presentmon_frames_dropped_total",
             "Frames dropped (presented but never displayed).", labels);
+        if (_opt.Metrics.FrameTimeMs)
+            _frameTime = f.CreateHistogram("presentmon_frame_time_ms",
+                "CPU frame time per frame (ms).",
+                new HistogramConfiguration { Buckets = frameBuckets, LabelNames = labels });
+        if (_opt.Metrics.DisplayedTimeMs)
+            _displayedTime = f.CreateHistogram("presentmon_displayed_time_ms",
+                "On-screen interval per displayed frame (ms).",
+                new HistogramConfiguration { Buckets = frameBuckets, LabelNames = labels });
+        if (_opt.Metrics.DisplayedFpsHist)
+            _displayedFpsHist = f.CreateHistogram("presentmon_displayed_fps_hist",
+                "Distribution of instantaneous displayed fps (1000/displayed_time) per frame; render as a heatmap.",
+                new HistogramConfiguration { Buckets = fpsBuckets, LabelNames = labels });
+        _log.LogInformation("emitting: frame_time_ms={Ft} displayed_time_ms={Dt} displayed_fps_hist={Fh}",
+            _opt.Metrics.FrameTimeMs, _opt.Metrics.DisplayedTimeMs, _opt.Metrics.DisplayedFpsHist);
 
-        // Publish every series at zero up front so "no frames yet" / "no drops"
+        // Publish every enabled series at zero up front so "no frames yet" / "no drops"
         // reads as 0, not absent — otherwise increase()/rate() return No Data and
         // panels/alerts break until the first event.
         _up.WithLabels(_app).Set(0);
-        _fps.WithLabels(_app).Set(0);
         _dropped.WithLabels(_app).Inc(0);
-        _frameTime.WithLabels(_app);
-        _displayedTime.WithLabels(_app);
-        _displayedFpsHist.WithLabels(_app);
+        _frameTime?.WithLabels(_app);
+        _displayedTime?.WithLabels(_app);
+        _displayedFpsHist?.WithLabels(_app);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -107,62 +127,59 @@ internal sealed class PollerService : BackgroundService
 
         using var pm = new PresentMonSession(_opt.FrameBatchSize);
 
-        // Track actual wall-time between drains so the fps gauge reflects real
-        // elapsed, not the nominal interval (which over/under-counts when a cycle
-        // runs long or drains a startup backlog). rate() stays authoritative.
-        long lastTs = Stopwatch.GetTimestamp();
-        bool firstCycle = true;
+        uint currentPid = 0;   // the PID we're currently tracking among name matches
+        int unproductive = 0;  // consecutive zero-frame cycles on currentPid
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var pid = ResolvePid();
-                if (pid is null)
+                var candidates = CandidatePids();
+                if (candidates.Length == 0)
                 {
+                    currentPid = 0;
                     _up.WithLabels(_app).Set(0);
-                    _fps.WithLabels(_app).Set(0);
                 }
                 else
                 {
-                    bool retracked = pm.EnsureTracking(pid.Value);
+                    // If our tracked PID vanished (or first run), start on the first match.
+                    if (Array.IndexOf(candidates, currentPid) < 0) { currentPid = candidates[0]; unproductive = 0; }
+                    bool retracked = pm.EnsureTracking(currentPid);
 
-                    int displayedThisCycle = 0;
-                    int drained = pm.DrainFrames(pid.Value, frame =>
+                    int drained = pm.DrainFrames(currentPid, frame =>
                     {
                         if (IsSane(frame.FrameTimeMs))
-                            _frameTime.WithLabels(_app).Observe(frame.FrameTimeMs);
+                            _frameTime?.WithLabels(_app).Observe(frame.FrameTimeMs);
                         if (frame.Dropped)
                         {
                             _dropped.WithLabels(_app).Inc();
                         }
-                        else
+                        else if (IsSane(frame.DisplayedTimeMs) && frame.DisplayedTimeMs > 0)
                         {
-                            displayedThisCycle++;
-                            if (IsSane(frame.DisplayedTimeMs) && frame.DisplayedTimeMs > 0)
-                            {
-                                _displayedTime.WithLabels(_app).Observe(frame.DisplayedTimeMs);
-                                _displayedFpsHist.WithLabels(_app).Observe(1000.0 / frame.DisplayedTimeMs);
-                            }
+                            _displayedTime?.WithLabels(_app).Observe(frame.DisplayedTimeMs);
+                            _displayedFpsHist?.WithLabels(_app).Observe(1000.0 / frame.DisplayedTimeMs);
                         }
                     });
 
-                    var elapsedSec = Stopwatch.GetElapsedTime(lastTs).TotalSeconds;
-                    lastTs = Stopwatch.GetTimestamp();
-
                     _up.WithLabels(_app).Set(drained > 0 ? 1 : 0);
-                    // Skip the fps sample on the first cycle or just after (re)tracking:
-                    // that drain covers an arbitrary backlog window, not one interval.
-                    if (!firstCycle && !retracked && elapsedSec > 0)
-                        _fps.WithLabels(_app).Set(displayedThisCycle / elapsedSec);
-                    firstCycle = false;
+
+                    // Converge on the PRESENTING pid: if this match isn't producing frames,
+                    // give it a couple cycles then rotate to the next name-match. Auto-finds
+                    // the presenter for multi-process apps (e.g. Chrome's GPU process); a no-op
+                    // when the name resolves to one process (Unity / native players).
+                    if (drained > 0) unproductive = 0;
+                    else if (candidates.Length > 1 && !retracked && ++unproductive >= 2)
+                    {
+                        int idx = Array.IndexOf(candidates, currentPid);
+                        currentPid = candidates[(idx + 1) % candidates.Length];
+                        unproductive = 0;
+                    }
                 }
             }
             catch (Exception ex)
             {
                 _log.LogError(ex, "Poll cycle failed");
                 _up.WithLabels(_app).Set(0);
-                _fps.WithLabels(_app).Set(0);
             }
 
             await Task.Delay(_opt.PollIntervalMs, stoppingToken);
@@ -171,25 +188,27 @@ internal sealed class PollerService : BackgroundService
 
     private static bool IsSane(double v) => double.IsFinite(v) && v >= 0;
 
-    private uint? ResolvePid()
+    // All PIDs matching the target (exact PID if set, else every process by name).
+    // The poll loop converges on whichever of these is actually presenting.
+    private uint[] CandidatePids()
     {
         if (_opt.TargetProcessId > 0)
         {
             try
             {
                 using var p = Process.GetProcessById(_opt.TargetProcessId);
-                return (uint)p.Id;
+                return new[] { (uint)p.Id };
             }
             catch (ArgumentException)
             {
-                return null;   // pid no longer alive
+                return Array.Empty<uint>();   // pid no longer alive
             }
         }
 
         var procs = Process.GetProcessesByName(_opt.TargetProcessName);
         try
         {
-            return procs.Length > 0 ? (uint)procs[0].Id : null;
+            return procs.Select(p => (uint)p.Id).ToArray();
         }
         finally
         {

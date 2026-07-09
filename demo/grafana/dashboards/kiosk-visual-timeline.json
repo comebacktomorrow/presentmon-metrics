@@ -1,0 +1,21 @@
+{
+  "title": "Kiosk — Visual Timeline (DEVBOX)",
+  "uid": "kiosk-visual-timeline",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "xzibit-kiosktimeline-panel",
+      "title": "DEVBOX screen — hover to scrub",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "sites": "dev",
+        "apiUrl": "http://localhost:8787",
+        "hideEmpty": true,
+        "apiKey": ""
+      }
+    }
+  ]
+}
