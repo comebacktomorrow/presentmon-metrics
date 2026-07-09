@@ -100,7 +100,12 @@ internal sealed class PollerService : BackgroundService
         _log.LogInformation("Exposing /metrics on :{Port}, tracking '{App}'", _opt.ListenPort, _app);
 
         using var pm = new PresentMonSession(_opt.FrameBatchSize);
-        var intervalSec = Math.Max(_opt.PollIntervalMs / 1000.0, 0.001);
+
+        // Track actual wall-time between drains so the fps gauge reflects real
+        // elapsed, not the nominal interval (which over/under-counts when a cycle
+        // runs long or drains a startup backlog). rate() stays authoritative.
+        long lastTs = Stopwatch.GetTimestamp();
+        bool firstCycle = true;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -114,7 +119,7 @@ internal sealed class PollerService : BackgroundService
                 }
                 else
                 {
-                    pm.EnsureTracking(pid.Value);
+                    bool retracked = pm.EnsureTracking(pid.Value);
 
                     int displayedThisCycle = 0;
                     int drained = pm.DrainFrames(pid.Value, frame =>
@@ -135,8 +140,15 @@ internal sealed class PollerService : BackgroundService
                         }
                     });
 
+                    var elapsedSec = Stopwatch.GetElapsedTime(lastTs).TotalSeconds;
+                    lastTs = Stopwatch.GetTimestamp();
+
                     _up.WithLabels(_app).Set(drained > 0 ? 1 : 0);
-                    _fps.WithLabels(_app).Set(displayedThisCycle / intervalSec);
+                    // Skip the fps sample on the first cycle or just after (re)tracking:
+                    // that drain covers an arbitrary backlog window, not one interval.
+                    if (!firstCycle && !retracked && elapsedSec > 0)
+                        _fps.WithLabels(_app).Set(displayedThisCycle / elapsedSec);
+                    firstCycle = false;
                 }
             }
             catch (Exception ex)

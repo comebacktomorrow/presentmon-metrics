@@ -64,14 +64,16 @@ internal sealed class PresentMonSession : IDisposable
     }
 
     // Point the query at a pid; re-tracks on change (self-heals on app restart).
-    public void EnsureTracking(uint pid)
+    // Returns true if it (re)started tracking this call, false if already tracking pid.
+    public bool EnsureTracking(uint pid)
     {
-        if (pid == _trackedPid) return;
+        if (pid == _trackedPid) return false;
         if (_trackedPid != 0) pmStopTrackingProcess(_session, _trackedPid);
         var st = pmStartTrackingProcess(_session, pid);
         if (st != PM_STATUS.PM_STATUS_SUCCESS)
             throw new InvalidOperationException($"pmStartTrackingProcess({pid}) failed: {st}");
         _trackedPid = pid;
+        return true;
     }
 
     // Drain all queued frames for pid, invoking onFrame for each. Returns frame count.
