@@ -67,14 +67,19 @@
       ]
     },
     {
-      "title": "GPU util % / temp °C",
-      "type": "timeseries",
+      "title": "Displayed FPS distribution (heatmap)",
+      "type": "heatmap",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
       "targets": [
-        { "expr": "presentmon_gpu_utilization_percent{instance=~\"$instance\"}", "legendFormat": "{{instance}} util%" },
-        { "expr": "presentmon_gpu_temperature_celsius{instance=~\"$instance\"}", "legendFormat": "{{instance}} temp" }
-      ]
+        { "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}" }
+      ],
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": { "mode": "scheme", "scheme": "Turbo", "steps": 64 },
+        "yAxis": { "unit": "none", "axisLabel": "fps", "decimals": 0 }
+      }
     }
   ]
 }

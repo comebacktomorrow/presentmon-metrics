@@ -35,12 +35,13 @@ signage process by name and re-tracks automatically when it restarts.
 | Metric | Type | Meaning |
 |---|---|---|
 | `presentmon_up` | gauge | 1 = target tracked & producing frames, 0 = missing/idle |
-| `presentmon_frame_time_ms` | histogram | CPU frame time per frame (ms) |
-| `presentmon_displayed_time_ms` | histogram | on-screen interval per displayed frame (ms) |
+| `presentmon_displayed_time_ms` | histogram | on-screen interval per displayed frame (ms) — the smoothness signal |
+| `presentmon_frame_time_ms` | histogram | CPU frame time per frame (ms) — diagnostic (CPU jitter vs display cadence) |
+| `presentmon_displayed_fps_hist` | histogram | instantaneous displayed fps per frame, fps-bucketed — render as a heatmap |
+| `presentmon_displayed_fps` | gauge | glanceable instantaneous fps (jittery; `rate()` of the counter is authoritative) |
 | `presentmon_frames_presented_total` | counter | all frames in the stream |
 | `presentmon_frames_displayed_total` | counter | frames that reached the screen |
 | `presentmon_frames_dropped_total` | counter | frames dropped (presented, never displayed) |
-| `presentmon_gpu_power_watts` / `_temperature_celsius` / `_utilization_percent` | gauge | GPU telemetry (off on GPU-less boxes) |
 
 All carry an `app` label. `instance`/host come from the Prometheus scrape config.
 
@@ -50,8 +51,12 @@ All carry an `app` label. `instance`/host come from the Prometheus scrape config
 # Frame-time p99 over the last 5m — the stutter SLO
 histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_displayed_time_ms_bucket[5m])))
 
-# Displayed FPS
+# Displayed FPS (avg) — and 1% low, the stutter signal
 rate(presentmon_frames_displayed_total[1m])
+1000 / histogram_quantile(0.99, sum by (le,instance) (rate(presentmon_displayed_time_ms_bucket[2m])))
+
+# FPS distribution as a heatmap panel (format: heatmap, calculate: false)
+sum by (le) (rate(presentmon_displayed_fps_hist_bucket[$__rate_interval]))
 
 # Dropped frames per minute
 increase(presentmon_frames_dropped_total[1m])

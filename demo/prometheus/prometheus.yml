@@ -1,17 +1,8 @@
 global:
   scrape_interval: 5s
-
 scrape_configs:
   - job_name: kiosk-presentmon
     static_configs:
-      # DEMO: scrape the bundled sample-data generator (frame-sim service).
-      - targets: ['frame-sim:9111']
+      - targets: ['host.docker.internal:9110']
         labels:
-          instance: signage-sim
-
-      # PRODUCTION: remove the frame-sim block above and point at your real
-      # exporter(s). For a machine reachable directly:
-      #   - targets: ['192.168.100.109:9110']
-      #       labels: { instance: kiosk-av2 }
-      # For local validation over an SSH tunnel (ssh -L 9110:localhost:9110 ...):
-      #   - targets: ['host.docker.internal:9110']
+          instance: dev-box-chrome

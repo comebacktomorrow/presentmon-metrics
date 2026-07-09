@@ -39,6 +39,7 @@ internal sealed class PollerService : BackgroundService
     private readonly CollectorRegistry _registry;
     private readonly Histogram _frameTime;
     private readonly Histogram _displayedTime;
+    private readonly Histogram _displayedFpsHist;
     private readonly Counter _presented;
     private readonly Counter _displayed;
     private readonly Counter _dropped;
@@ -48,6 +49,12 @@ internal sealed class PollerService : BackgroundService
     // Buckets in ms, tuned around 60 Hz (16.7) and 30 Hz (33.3).
     private static readonly double[] FrameTimeBuckets =
         { 6, 8, 10, 12, 14, 16.7, 20, 25, 33.3, 50, 66.7, 100, 250, 500 };
+
+    // Buckets in fps (1000/frametime), for the intuitive fps heatmap. Covers the
+    // signage-relevant range; a locked-60 player clusters at 60 and smears toward
+    // 30/24 during stutter.
+    private static readonly double[] FpsBuckets =
+        { 5, 10, 15, 20, 24, 30, 40, 48, 50, 60, 72, 90, 120, 144, 240 };
 
     public PollerService(IOptions<ExporterOptions> opt, ILogger<PollerService> log)
     {
@@ -74,6 +81,9 @@ internal sealed class PollerService : BackgroundService
         _displayedTime = f.CreateHistogram("presentmon_displayed_time_ms",
             "On-screen interval per displayed frame (ms).",
             new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = labels });
+        _displayedFpsHist = f.CreateHistogram("presentmon_displayed_fps_hist",
+            "Distribution of instantaneous displayed fps (1000/displayed_time) per frame; render as a heatmap.",
+            new HistogramConfiguration { Buckets = FpsBuckets, LabelNames = labels });
         _presented = f.CreateCounter("presentmon_frames_presented_total",
             "Frames presented (all frames in the stream).", labels);
         _displayed = f.CreateCounter("presentmon_frames_displayed_total",
@@ -91,6 +101,7 @@ internal sealed class PollerService : BackgroundService
         _dropped.WithLabels(_app).Inc(0);
         _frameTime.WithLabels(_app);
         _displayedTime.WithLabels(_app);
+        _displayedFpsHist.WithLabels(_app);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -135,8 +146,11 @@ internal sealed class PollerService : BackgroundService
                         {
                             _displayed.WithLabels(_app).Inc();
                             displayedThisCycle++;
-                            if (IsSane(frame.DisplayedTimeMs))
+                            if (IsSane(frame.DisplayedTimeMs) && frame.DisplayedTimeMs > 0)
+                            {
                                 _displayedTime.WithLabels(_app).Observe(frame.DisplayedTimeMs);
+                                _displayedFpsHist.WithLabels(_app).Observe(1000.0 / frame.DisplayedTimeMs);
+                            }
                         }
                     });
 
