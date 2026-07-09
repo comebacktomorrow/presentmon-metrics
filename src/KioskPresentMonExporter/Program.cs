@@ -8,6 +8,9 @@ public sealed class ExporterOptions
 {
     // Process to measure, WITHOUT the .exe suffix (e.g. "SignagePlayer", "notepad").
     public string TargetProcessName { get; set; } = "";
+    // Optional: target an exact PID instead of resolving by name (0 = use name).
+    // Handy when multiple instances share a name (e.g. one dwm per session).
+    public int TargetProcessId { get; set; } = 0;
     public int ListenPort { get; set; } = 9110;
     public double GpuWindowMs { get; set; } = 1000;   // averaging window for GPU gauges
     public uint FrameBatchSize { get; set; } = 512;   // frames drained per pmConsumeFrames call
@@ -72,10 +75,12 @@ internal sealed class PollerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (string.IsNullOrWhiteSpace(_opt.TargetProcessName))
-            throw new InvalidOperationException("Exporter:TargetProcessName is required.");
+        if (string.IsNullOrWhiteSpace(_opt.TargetProcessName) && _opt.TargetProcessId <= 0)
+            throw new InvalidOperationException("Exporter:TargetProcessName or TargetProcessId is required.");
 
-        var app = _opt.TargetProcessName;
+        var app = !string.IsNullOrWhiteSpace(_opt.TargetProcessName)
+            ? _opt.TargetProcessName
+            : $"pid{_opt.TargetProcessId}";
         using var server = new KestrelMetricServer(port: _opt.ListenPort);
         server.Start();
 
@@ -87,7 +92,7 @@ internal sealed class PollerService : BackgroundService
         {
             try
             {
-                var pid = FindPid(app);
+                var pid = ResolvePid();
                 if (pid is null)
                 {
                     Up.WithLabels(app).Set(0);
@@ -141,9 +146,22 @@ internal sealed class PollerService : BackgroundService
         if (IsSane(v)) g.WithLabels(app).Set(v);
     }
 
-    private static uint? FindPid(string processName)
+    private uint? ResolvePid()
     {
-        var procs = Process.GetProcessesByName(processName);
+        if (_opt.TargetProcessId > 0)
+        {
+            try
+            {
+                using var p = Process.GetProcessById(_opt.TargetProcessId);
+                return (uint)p.Id;
+            }
+            catch (ArgumentException)
+            {
+                return null;   // pid no longer alive
+            }
+        }
+
+        var procs = Process.GetProcessesByName(_opt.TargetProcessName);
         try
         {
             return procs.Length > 0 ? (uint)procs[0].Id : null;
