@@ -12,7 +12,6 @@ public sealed class ExporterOptions
     // Handy when multiple instances share a name (e.g. one dwm per session).
     public int TargetProcessId { get; set; } = 0;
     public int ListenPort { get; set; } = 9110;
-    public double GpuWindowMs { get; set; } = 1000;   // averaging window for GPU gauges
     public uint FrameBatchSize { get; set; } = 512;   // frames drained per pmConsumeFrames call
     public int PollIntervalMs { get; set; } = 1000;   // how often we drain the frame stream
 }
@@ -33,60 +32,75 @@ internal sealed class PollerService : BackgroundService
 {
     private readonly ExporterOptions _opt;
     private readonly ILogger<PollerService> _log;
+    private readonly string _app;
 
-    private static readonly string[] Labels = { "app" };
+    // Own registry so ONLY presentmon_* is exposed — no dotnet_/process_/kestrel_
+    // default-collector noise (which is pure overhead across a fleet).
+    private readonly CollectorRegistry _registry;
+    private readonly Histogram _frameTime;
+    private readonly Histogram _displayedTime;
+    private readonly Counter _presented;
+    private readonly Counter _displayed;
+    private readonly Counter _dropped;
+    private readonly Gauge _fps;
+    private readonly Gauge _up;
 
-    // Buckets in ms, tuned around 60 Hz (16.7) and 30 Hz (33.3) — the frame-pacing
-    // range that matters for signage smoothness.
+    // Buckets in ms, tuned around 60 Hz (16.7) and 30 Hz (33.3).
     private static readonly double[] FrameTimeBuckets =
         { 6, 8, 10, 12, 14, 16.7, 20, 25, 33.3, 50, 66.7, 100, 250, 500 };
-
-    // Cumulative histograms: Grafana computes p99 over ANY window via
-    //   histogram_quantile(0.99, rate(presentmon_frame_time_ms_bucket[5m]))
-    private static readonly Histogram FrameTime = Metrics.CreateHistogram(
-        "presentmon_frame_time_ms", "CPU frame time per frame (ms).",
-        new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = Labels });
-    private static readonly Histogram DisplayedTime = Metrics.CreateHistogram(
-        "presentmon_displayed_time_ms", "On-screen interval per displayed frame (ms).",
-        new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = Labels });
-
-    // Cumulative counters: FPS = rate(...presented/displayed...), drops = increase(...dropped...)
-    private static readonly Counter FramesPresented = Metrics.CreateCounter(
-        "presentmon_frames_presented_total", "Frames presented (all frames in the stream).", Labels);
-    private static readonly Counter FramesDisplayed = Metrics.CreateCounter(
-        "presentmon_frames_displayed_total", "Frames that reached the screen (not dropped).", Labels);
-    private static readonly Counter FramesDropped = Metrics.CreateCounter(
-        "presentmon_frames_dropped_total", "Frames dropped (presented but never displayed).", Labels);
-
-    private static readonly Gauge Up = Metrics.CreateGauge(
-        "presentmon_up", "1 if the target process is tracked and producing frames, else 0.", Labels);
-    private static readonly Gauge GpuPower = Metrics.CreateGauge(
-        "presentmon_gpu_power_watts", "Windowed avg GPU power (W).", Labels);
-    private static readonly Gauge GpuTemp = Metrics.CreateGauge(
-        "presentmon_gpu_temperature_celsius", "Windowed avg GPU temperature (C).", Labels);
-    private static readonly Gauge GpuUtil = Metrics.CreateGauge(
-        "presentmon_gpu_utilization_percent", "Windowed avg GPU utilization (%).", Labels);
 
     public PollerService(IOptions<ExporterOptions> opt, ILogger<PollerService> log)
     {
         _opt = opt.Value;
         _log = log;
+
+        if (string.IsNullOrWhiteSpace(_opt.TargetProcessName) && _opt.TargetProcessId <= 0)
+            throw new InvalidOperationException("Exporter:TargetProcessName or TargetProcessId is required.");
+        _app = !string.IsNullOrWhiteSpace(_opt.TargetProcessName)
+            ? _opt.TargetProcessName
+            : $"pid{_opt.TargetProcessId}";
+
+        _registry = Metrics.NewCustomRegistry();
+        var f = Metrics.WithCustomRegistry(_registry);
+        var labels = new[] { "app" };
+
+        _up = f.CreateGauge("presentmon_up",
+            "1 if the target process is tracked and producing frames, else 0.", labels);
+        _fps = f.CreateGauge("presentmon_displayed_fps",
+            "Displayed frames in the last poll interval, as frames/sec (glanceable; rate() of the counter is authoritative).", labels);
+        _frameTime = f.CreateHistogram("presentmon_frame_time_ms",
+            "CPU frame time per frame (ms).",
+            new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = labels });
+        _displayedTime = f.CreateHistogram("presentmon_displayed_time_ms",
+            "On-screen interval per displayed frame (ms).",
+            new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = labels });
+        _presented = f.CreateCounter("presentmon_frames_presented_total",
+            "Frames presented (all frames in the stream).", labels);
+        _displayed = f.CreateCounter("presentmon_frames_displayed_total",
+            "Frames that reached the screen (not dropped).", labels);
+        _dropped = f.CreateCounter("presentmon_frames_dropped_total",
+            "Frames dropped (presented but never displayed).", labels);
+
+        // Publish every series at zero up front so "no frames yet" / "no drops"
+        // reads as 0, not absent — otherwise increase()/rate() return No Data and
+        // panels/alerts break until the first event.
+        _up.WithLabels(_app).Set(0);
+        _fps.WithLabels(_app).Set(0);
+        _presented.WithLabels(_app).Inc(0);
+        _displayed.WithLabels(_app).Inc(0);
+        _dropped.WithLabels(_app).Inc(0);
+        _frameTime.WithLabels(_app);
+        _displayedTime.WithLabels(_app);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (string.IsNullOrWhiteSpace(_opt.TargetProcessName) && _opt.TargetProcessId <= 0)
-            throw new InvalidOperationException("Exporter:TargetProcessName or TargetProcessId is required.");
-
-        var app = !string.IsNullOrWhiteSpace(_opt.TargetProcessName)
-            ? _opt.TargetProcessName
-            : $"pid{_opt.TargetProcessId}";
-        using var server = new KestrelMetricServer(port: _opt.ListenPort);
+        using var server = new KestrelMetricServer(port: _opt.ListenPort, registry: _registry);
         server.Start();
+        _log.LogInformation("Exposing /metrics on :{Port}, tracking '{App}'", _opt.ListenPort, _app);
 
-        using var pm = new PresentMonSession(_opt.GpuWindowMs, _opt.FrameBatchSize);
-        _log.LogInformation("Exposing /metrics on :{Port}, tracking '{App}' (GPU telemetry: {Gpu})",
-            _opt.ListenPort, app, pm.GpuEnabled ? "on" : "off");
+        using var pm = new PresentMonSession(_opt.FrameBatchSize);
+        var intervalSec = Math.Max(_opt.PollIntervalMs / 1000.0, 0.001);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -95,44 +109,41 @@ internal sealed class PollerService : BackgroundService
                 var pid = ResolvePid();
                 if (pid is null)
                 {
-                    Up.WithLabels(app).Set(0);
+                    _up.WithLabels(_app).Set(0);
+                    _fps.WithLabels(_app).Set(0);
                 }
                 else
                 {
                     pm.EnsureTracking(pid.Value);
 
-                    int drained = pm.DrainFrames(pid.Value, f =>
+                    int displayedThisCycle = 0;
+                    int drained = pm.DrainFrames(pid.Value, frame =>
                     {
-                        if (IsSane(f.FrameTimeMs))
-                            FrameTime.WithLabels(app).Observe(f.FrameTimeMs);
-                        FramesPresented.WithLabels(app).Inc();
-                        if (f.Dropped)
+                        if (IsSane(frame.FrameTimeMs))
+                            _frameTime.WithLabels(_app).Observe(frame.FrameTimeMs);
+                        _presented.WithLabels(_app).Inc();
+                        if (frame.Dropped)
                         {
-                            FramesDropped.WithLabels(app).Inc();
+                            _dropped.WithLabels(_app).Inc();
                         }
                         else
                         {
-                            FramesDisplayed.WithLabels(app).Inc();
-                            if (IsSane(f.DisplayedTimeMs))
-                                DisplayedTime.WithLabels(app).Observe(f.DisplayedTimeMs);
+                            _displayed.WithLabels(_app).Inc();
+                            displayedThisCycle++;
+                            if (IsSane(frame.DisplayedTimeMs))
+                                _displayedTime.WithLabels(_app).Observe(frame.DisplayedTimeMs);
                         }
                     });
 
-                    Up.WithLabels(app).Set(drained > 0 ? 1 : 0);
-
-                    var gpu = pm.PollGpu(pid.Value);
-                    if (gpu is not null)
-                    {
-                        SetIfSane(GpuPower, app, gpu["gpu_power_w"]);
-                        SetIfSane(GpuTemp, app, gpu["gpu_temperature_c"]);
-                        SetIfSane(GpuUtil, app, gpu["gpu_utilization_percent"]);
-                    }
+                    _up.WithLabels(_app).Set(drained > 0 ? 1 : 0);
+                    _fps.WithLabels(_app).Set(displayedThisCycle / intervalSec);
                 }
             }
             catch (Exception ex)
             {
                 _log.LogError(ex, "Poll cycle failed");
-                Up.WithLabels(app).Set(0);
+                _up.WithLabels(_app).Set(0);
+                _fps.WithLabels(_app).Set(0);
             }
 
             await Task.Delay(_opt.PollIntervalMs, stoppingToken);
@@ -140,11 +151,6 @@ internal sealed class PollerService : BackgroundService
     }
 
     private static bool IsSane(double v) => double.IsFinite(v) && v >= 0;
-
-    private static void SetIfSane(Gauge g, string app, double v)
-    {
-        if (IsSane(v)) g.WithLabels(app).Set(v);
-    }
 
     private uint? ResolvePid()
     {
