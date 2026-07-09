@@ -32,7 +32,7 @@ composition timing is bypassed by fullscreen/flip — leaving the OS present lay
 | P/Invoke layer (`PresentMonInterop.cs`) | ✅ written — ⬜ unverified on Windows |
 | Frame-query drain + GPU dynamic query (`PresentMonSession.cs`) | ✅ written — ⬜ unverified |
 | Exporter host: histograms + counters + poll loop (`Program.cs`) | ✅ written |
-| Compile + self-contained publish on dev box (192.168.99.100) | ✅ builds clean (net8 8.0.422); fixed 2 bugs |
+| Compile + self-contained publish on a Windows dev box | ✅ builds clean (net8 8.0.422); fixed 2 bugs |
 | Interop/runtime verified: pmOpenSession/RegisterFrameQuery/GPU query, /metrics 200 | ✅ on dev box |
 | Grafana pipeline (Prometheus scrape → dashboard → PromQL) | ✅ validated via `demo/` + sample-data generator |
 | Real frame capture (histogram/counter values) | ⬜ **blocked**: dev box is Parsec/virtual-display → no capturable presents. Needs a real-display target (kiosk VM, creds pending) |

@@ -1,34 +1,37 @@
-# Kiosk PresentMon Exporter
+# presentmon-metrics
 
-Frame-pacing telemetry for the Windows kiosk fleet → Prometheus → Grafana.
+A Prometheus exporter for Windows frame-pacing telemetry, built on the **Intel
+PresentMon 2.x Service**. It measures how smoothly frames actually reach the
+screen — frame time, FPS, and dropped frames — for *any* fullscreen or
+black-box Direct3D/OpenGL/Vulkan app, without instrumenting the app itself.
 
-The signage players render fullscreen and we don't own their source, so we
-measure at the OS present layer with the **Intel PresentMon 2.x Service** and
-bridge its SDK to a Prometheus `/metrics` endpoint. Complements
-`kiosk-ohm` (CPU/GPU temp, fan) and `windows_exporter` (host metrics) with the
-one dimension they can't see: **how smoothly frames actually reach the screen.**
+Point it at a process; it drains PresentMon's per-frame stream and exposes
+Prometheus histograms + counters on a localhost `/metrics` endpoint.
 
-Exposes frame-time p99, dropped frames, and FPS (plus GPU power/temp/util for
-free from the same query).
+> **Requires a real/local display.** RDP / virtual-display sessions don't emit
+> the DXGI present events PresentMon captures — the exporter will read `up 0`.
 
 ## How it works
 
 ```
-PresentMon Service (LocalSystem, ETW capture + vendor telemetry)
-        │  PresentMonAPI2.dll  (frame query: per-frame stream + GPU dynamic query)
+PresentMon Service (LocalSystem, ETW frame capture)
+        │  PresentMonAPI2.dll  (frame query: per-frame stream)
         ▼
-kiosk-presentmon-exporter (Windows service)  ──►  :9110/metrics  ──►  Prometheus ──► Grafana
+presentmon-metrics (Windows service)  ──►  localhost:9110/metrics  ──►  Prometheus ──► Grafana
 ```
 
-The exporter drains the SDK's **frame query** (the per-frame stream) and feeds
-every frame into Prometheus **histograms + counters**. Because those are
-cumulative, per-minute scraping loses nothing and Grafana reconstructs any
-quantile over any window at query time — the sub-second/per-minute mismatch
-disappears. GPU power/temp/util ride along as gauges from a small dynamic query.
+The exporter drains the SDK's **frame query** and feeds every frame into
+Prometheus **histograms + counters**. Because those are cumulative, per-minute
+scraping loses nothing and Grafana reconstructs any quantile over any window at
+query time — the sub-second/per-minute mismatch disappears.
 
-Both pieces run as **Windows services**, outside the Assigned-Access kiosk
-session, so true kiosk mode doesn't restrict them. The exporter finds the
-signage process by name and re-tracks automatically when it restarts.
+Runs as a **Windows service**; the metrics endpoint binds **localhost**. Finds
+the target process by name (or exact PID) and re-tracks automatically when it
+restarts.
+
+> **Fleet deployment:** the private `xzibit-pty-ltd/kiosk-presentmon` component
+> installs and wires this on the kiosk fleet (downloads the release, installs the
+> PresentMon Service, registers the Windows service, scrapes via kiosk-alloy).
 
 ## Exported metrics
 
@@ -95,27 +98,26 @@ kiosk) and drop the `frame-sim` service.
 ## Build & deploy (on a Windows box)
 
 ```powershell
-# Self-contained single-file exe — kiosks need no .NET runtime installed
+# Self-contained single-file exe — no .NET runtime needed on the target
 dotnet publish src/KioskPresentMonExporter -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 
-# 1. Install the PresentMon Service (ships PresentMonAPI2.dll). >= v2.3.1.
-# 2. Copy PresentMonAPI2.dll next to the exe (or rely on the service's registration).
-# 3. Register the exporter as an auto-start service:
-sc.exe create KioskPresentMonExporter binPath= "C:\kiosk\kiosk-presentmon-exporter.exe" start= auto
-sc.exe start KioskPresentMonExporter
+# 1. Install the Intel PresentMon Service (ships PresentMonAPI2.dll), >= v2.3.1:
+#      winget install --id Intel.PresentMon -e
+# 2. Make PresentMonAPI2.dll resolvable — run with the service dir on PATH, e.g.
+#      $env:PATH = "C:\Program Files\Intel\PresentMonSharedService;$env:PATH"
+# 3. Register as an auto-start LocalSystem service:
+sc.exe create presentmon-metrics binPath= "C:\path\presentmon-metrics.exe" start= auto obj= LocalSystem
+sc.exe start presentmon-metrics
 
-# 4. Point Prometheus at http://<kiosk>:9110/metrics
+# 4. Point Prometheus at http://localhost:9110/metrics
 ```
 
-Set `Exporter:TargetProcessName` in `appsettings.json` to the signage player's
-process name (no `.exe`).
+Config via `appsettings.json` (or `Exporter__*` env vars): `TargetProcessName`
+(no `.exe`) or `TargetProcessId`, `ListenPort`, `PollIntervalMs`.
 
 ## Status
 
-⚠️ **Scaffold — not yet built or run on hardware.** Written on macOS against the
-published PresentMonAPI.h; the P/Invoke layer needs a compile + smoke test on a
-Windows kiosk before release. See [docs/PLAN.md](docs/PLAN.md) for the exact
-checklist (blob/swap-chain layout and GPU `deviceId` are the two things to verify).
-
-Release via the fleet flow: `--prerelease` then promote; never pin.
+**Validated on real hardware** — builds clean (.NET 8), the PresentMon interop
+works, and live GPU frame capture flows through Prometheus → Grafana (verified
+~60 fps, p99 frame time, fps heatmap). See [docs/PLAN.md](docs/PLAN.md).

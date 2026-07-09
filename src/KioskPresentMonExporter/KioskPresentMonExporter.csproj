@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>KioskPresentMonExporter</RootNamespace>
-    <AssemblyName>kiosk-presentmon-exporter</AssemblyName>
+    <AssemblyName>presentmon-metrics</AssemblyName>
     <!-- Self-contained single-file publish so the kiosks need no .NET runtime installed.
          See README for the exact publish command. -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
