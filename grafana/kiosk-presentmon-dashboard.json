@@ -36,11 +36,11 @@
       "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
       "targets": [
-        { "expr": "presentmon_displayed_fps{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+        { "expr": "rate(presentmon_frames_displayed_total{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}" }
       ]
     },
     {
-      "title": "Frame time p99 (ms) — on-screen cadence",
+      "title": "Frame time p99 (ms) — on-screen cadence, over 5m",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [
@@ -48,17 +48,18 @@
       ] } } },
       "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
       "targets": [
-        { "expr": "presentmon_displayed_time_ms_p99{instance=~\"$instance\"}", "legendFormat": "{{instance}} p99" },
-        { "expr": "presentmon_cpu_frame_time_ms_p99{instance=~\"$instance\"}", "legendFormat": "{{instance}} cpu p99" }
+        { "expr": "histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_displayed_time_ms_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} displayed p99" },
+        { "expr": "histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_frame_time_ms_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} cpu p99" }
       ]
     },
     {
-      "title": "Dropped frames (windowed)",
+      "title": "Dropped frames / min & drop ratio",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
       "targets": [
-        { "expr": "presentmon_dropped_frames{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+        { "expr": "increase(presentmon_frames_dropped_total{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}} dropped/min" },
+        { "expr": "100 * rate(presentmon_frames_dropped_total{instance=~\"$instance\"}[5m]) / rate(presentmon_frames_presented_total{instance=~\"$instance\"}[5m])", "legendFormat": "{{instance}} drop %" }
       ]
     },
     {

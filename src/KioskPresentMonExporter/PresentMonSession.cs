@@ -2,85 +2,122 @@ using static KioskPresentMonExporter.PresentMonInterop;
 
 namespace KioskPresentMonExporter;
 
-// Thin wrapper over the SDK dynamic-query flow:
-//   pmOpenSession -> pmStartTrackingProcess -> pmRegisterDynamicQuery
-//   -> pmPollDynamicQuery (once per scrape) -> pmCloseSession
+// One raw per-frame record pulled from the frame query.
+public readonly record struct FrameRecord(double FrameTimeMs, double DisplayedTimeMs, bool Dropped);
+
+// Bridges the PresentMon SDK to Prometheus. Two queries on one session:
 //
-// The dynamic query does the aggregation for us: we ask the SDK for the
-// PERCENTILE_99 / AVG of each metric over a sliding window, so the exporter
-// never touches per-frame data. Poll -> read doubles -> set gauges.
+//   * FRAME query  — the per-frame stream (CPU_FRAME_TIME, DISPLAYED_TIME,
+//     DROPPED_FRAMES with PM_STAT_NONE). We drain every frame and feed them
+//     into Prometheus histograms + counters. Cumulative, so per-minute scraping
+//     loses nothing and Grafana can compute any quantile over any window.
+//
+//   * DYNAMIC query — slow-moving GPU telemetry (power/temp/util) as windowed
+//     averages → gauges. Optional: disabled automatically on a GPU-less box.
 internal sealed class PresentMonSession : IDisposable
 {
-    // Each entry becomes one PM_QUERY_ELEMENT and one exported gauge key.
-    private static readonly (string Key, PM_METRIC Metric, PM_STAT Stat)[] Wanted =
+    // Frame-query elements (order = read order). PM_STAT_NONE = raw per-frame value.
+    private static readonly PM_METRIC[] FrameMetrics =
     {
-        // The trio you actually asked for:
-        ("cpu_frame_time_ms_p99",   PM_METRIC.PM_METRIC_CPU_FRAME_TIME, PM_STAT.PM_STAT_PERCENTILE_99),
-        ("cpu_frame_time_ms_avg",   PM_METRIC.PM_METRIC_CPU_FRAME_TIME, PM_STAT.PM_STAT_AVG),
-        ("displayed_time_ms_p99",   PM_METRIC.PM_METRIC_DISPLAYED_TIME, PM_STAT.PM_STAT_PERCENTILE_99),
-        ("displayed_time_ms_avg",   PM_METRIC.PM_METRIC_DISPLAYED_TIME, PM_STAT.PM_STAT_AVG),
-        ("displayed_fps_avg",       PM_METRIC.PM_METRIC_DISPLAYED_FPS,  PM_STAT.PM_STAT_AVG),
-        ("presented_fps_avg",       PM_METRIC.PM_METRIC_PRESENTED_FPS,  PM_STAT.PM_STAT_AVG),
-        ("dropped_frames",          PM_METRIC.PM_METRIC_DROPPED_FRAMES, PM_STAT.PM_STAT_AVG),
-        // GPU telemetry — bonus, same poll. NOTE: GPU metrics may require a real
-        // adapter deviceId (see below); if they read as 0/NaN, resolve the id via
-        // the introspection API. Frame metrics above use deviceId 0 and are solid.
-        ("gpu_power_w",             PM_METRIC.PM_METRIC_GPU_POWER,       PM_STAT.PM_STAT_AVG),
-        ("gpu_temperature_c",       PM_METRIC.PM_METRIC_GPU_TEMPERATURE, PM_STAT.PM_STAT_AVG),
-        ("gpu_utilization_percent", PM_METRIC.PM_METRIC_GPU_UTILIZATION, PM_STAT.PM_STAT_AVG),
+        PM_METRIC.PM_METRIC_CPU_FRAME_TIME,   // 0
+        PM_METRIC.PM_METRIC_DISPLAYED_TIME,   // 1
+        PM_METRIC.PM_METRIC_DROPPED_FRAMES,   // 2
     };
 
-    private const uint MaxSwapChains = 8;
+    private static readonly (string Key, PM_METRIC Metric)[] GpuMetrics =
+    {
+        ("gpu_power_w",             PM_METRIC.PM_METRIC_GPU_POWER),
+        ("gpu_temperature_c",       PM_METRIC.PM_METRIC_GPU_TEMPERATURE),
+        ("gpu_utilization_percent", PM_METRIC.PM_METRIC_GPU_UTILIZATION),
+    };
 
-    private readonly double _windowMs;
-    private readonly double _offsetMs;
+    private readonly double _gpuWindowMs;
+    private readonly uint _batchSize;
 
     private IntPtr _session;
-    private IntPtr _query;
-    private PM_QUERY_ELEMENT[] _elements = Array.Empty<PM_QUERY_ELEMENT>();
-    private int _blobStride;
     private uint _trackedPid;
 
-    public PresentMonSession(double windowMs, double offsetMs)
+    // Frame query state
+    private IntPtr _frameQuery;
+    private uint _frameStride;              // bytes per frame record
+    private long[] _frameOffsets = Array.Empty<long>();
+    private byte[] _frameBuf = Array.Empty<byte>();
+
+    // GPU dynamic query state (optional)
+    private bool _gpuEnabled;
+    private IntPtr _gpuQuery;
+    private PM_QUERY_ELEMENT[] _gpuElements = Array.Empty<PM_QUERY_ELEMENT>();
+    private int _gpuStride;
+
+    public bool GpuEnabled => _gpuEnabled;
+
+    public PresentMonSession(double gpuWindowMs, uint batchSize)
     {
-        _windowMs = windowMs;
-        _offsetMs = offsetMs;
+        _gpuWindowMs = gpuWindowMs;
+        _batchSize = Math.Max(1, batchSize);
 
         var st = pmOpenSession(out _session);
         if (st != PM_STATUS.PM_STATUS_SUCCESS)
             throw new InvalidOperationException($"pmOpenSession failed: {st}");
 
-        RegisterQuery();
+        RegisterFrameQuery();
+        TryRegisterGpuQuery();   // best-effort; leaves _gpuEnabled=false on failure
     }
 
-    private void RegisterQuery()
+    private void RegisterFrameQuery()
     {
-        _elements = new PM_QUERY_ELEMENT[Wanted.Length];
-        for (int i = 0; i < Wanted.Length; i++)
-        {
-            _elements[i] = new PM_QUERY_ELEMENT
+        var elements = new PM_QUERY_ELEMENT[FrameMetrics.Length];
+        for (int i = 0; i < FrameMetrics.Length; i++)
+            elements[i] = new PM_QUERY_ELEMENT
             {
-                metric = Wanted[i].Metric,
-                stat = Wanted[i].Stat,
-                deviceId = 0,   // 0 = default/universal device for frame metrics
+                metric = FrameMetrics[i],
+                stat = PM_STAT.PM_STAT_NONE,
+                deviceId = 0,
                 arrayIndex = 0,
             };
-        }
 
-        var st = pmRegisterDynamicQuery(_session, out _query, _elements,
-            (ulong)_elements.Length, _windowMs, _offsetMs);
+        var st = pmRegisterFrameQuery(_session, out _frameQuery, elements,
+            (ulong)elements.Length, out _frameStride);
         if (st != PM_STATUS.PM_STATUS_SUCCESS)
-            throw new InvalidOperationException($"pmRegisterDynamicQuery failed: {st}");
+            throw new InvalidOperationException($"pmRegisterFrameQuery failed: {st}");
+        if (_frameStride == 0)
+            throw new InvalidOperationException("pmRegisterFrameQuery returned blobSize 0");
 
-        // After registration, each element's dataOffset/dataSize is populated.
-        // The per-swap-chain stride is the far edge of the last element.
-        _blobStride = 0;
-        foreach (var e in _elements)
-            _blobStride = Math.Max(_blobStride, (int)(e.dataOffset + e.dataSize));
+        _frameOffsets = elements.Select(e => (long)e.dataOffset).ToArray();
+        _frameBuf = new byte[_frameStride * _batchSize];
     }
 
-    // Point the query at a pid. Safe to call repeatedly; only re-tracks on change
-    // (self-heals when the signage app restarts under a new pid).
+    private void TryRegisterGpuQuery()
+    {
+        try
+        {
+            _gpuElements = new PM_QUERY_ELEMENT[GpuMetrics.Length];
+            for (int i = 0; i < GpuMetrics.Length; i++)
+                _gpuElements[i] = new PM_QUERY_ELEMENT
+                {
+                    metric = GpuMetrics[i].Metric,
+                    stat = PM_STAT.PM_STAT_AVG,
+                    deviceId = 0,   // may need a real adapter id; see PLAN.md
+                    arrayIndex = 0,
+                };
+
+            var st = pmRegisterDynamicQuery(_session, out _gpuQuery, _gpuElements,
+                (ulong)_gpuElements.Length, _gpuWindowMs, 0);
+            if (st != PM_STATUS.PM_STATUS_SUCCESS)
+                return;   // GPU telemetry unavailable (e.g. no GPU) — frame path unaffected
+
+            _gpuStride = 0;
+            foreach (var e in _gpuElements)
+                _gpuStride = Math.Max(_gpuStride, (int)(e.dataOffset + e.dataSize));
+            _gpuEnabled = _gpuStride > 0;
+        }
+        catch
+        {
+            _gpuEnabled = false;
+        }
+    }
+
+    // Point both queries at a pid; re-tracks on change (self-heals on app restart).
     public void EnsureTracking(uint pid)
     {
         if (pid == _trackedPid) return;
@@ -91,29 +128,52 @@ internal sealed class PresentMonSession : IDisposable
         _trackedPid = pid;
     }
 
-    // Poll the current window and return metric-key -> value. Returns null if the
-    // process produced no swap-chain data this window (app not presenting yet).
-    public IReadOnlyDictionary<string, double>? Poll(uint pid)
+    // Drain all queued frames for pid, invoking onFrame for each. Returns frame count.
+    public int DrainFrames(uint pid, Action<FrameRecord> onFrame)
     {
-        var blob = new byte[_blobStride * MaxSwapChains];
-        uint swapChains = MaxSwapChains;
+        int total = 0;
+        while (true)
+        {
+            uint n = _batchSize;
+            var st = pmConsumeFrames(_frameQuery, pid, _frameBuf, ref n);
+            if (st != PM_STATUS.PM_STATUS_SUCCESS || n == 0)
+                break;
 
-        var st = pmPollDynamicQuery(_query, pid, blob, ref swapChains);
+            for (uint i = 0; i < n; i++)
+            {
+                long b = (long)i * _frameStride;
+                double ft = BitConverter.ToDouble(_frameBuf, (int)(b + _frameOffsets[0]));
+                double dt = BitConverter.ToDouble(_frameBuf, (int)(b + _frameOffsets[1]));
+                double dr = BitConverter.ToDouble(_frameBuf, (int)(b + _frameOffsets[2]));
+                onFrame(new FrameRecord(ft, dt, dr >= 0.5));
+                total++;
+            }
+
+            if (n < _batchSize) break;   // buffer wasn't full → stream drained
+        }
+        return total;
+    }
+
+    // Latest windowed GPU averages, or null if GPU telemetry is disabled/empty.
+    public IReadOnlyDictionary<string, double>? PollGpu(uint pid)
+    {
+        if (!_gpuEnabled) return null;
+
+        var blob = new byte[_gpuStride];
+        uint swapChains = 1;
+        var st = pmPollDynamicQuery(_gpuQuery, pid, blob, ref swapChains);
         if (st != PM_STATUS.PM_STATUS_SUCCESS || swapChains == 0)
             return null;
 
-        // A fullscreen signage app has one swap chain; read the first block.
-        var result = new Dictionary<string, double>(Wanted.Length);
-        for (int i = 0; i < Wanted.Length; i++)
-        {
-            int off = (int)_elements[i].dataOffset;
-            result[Wanted[i].Key] = BitConverter.ToDouble(blob, off);
-        }
+        var result = new Dictionary<string, double>(GpuMetrics.Length);
+        for (int i = 0; i < GpuMetrics.Length; i++)
+            result[GpuMetrics[i].Key] = BitConverter.ToDouble(blob, (int)_gpuElements[i].dataOffset);
         return result;
     }
 
     public void Dispose()
     {
+        if (_frameQuery != IntPtr.Zero) pmFreeFrameQuery(_frameQuery);
         if (_trackedPid != 0) pmStopTrackingProcess(_session, _trackedPid);
         if (_session != IntPtr.Zero) pmCloseSession(_session);
         _session = IntPtr.Zero;

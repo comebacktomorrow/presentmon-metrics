@@ -15,15 +15,16 @@ free from the same query).
 
 ```
 PresentMon Service (LocalSystem, ETW capture + vendor telemetry)
-        │  PresentMonAPI2.dll  (dynamic query: p99/avg over a sliding window)
+        │  PresentMonAPI2.dll  (frame query: per-frame stream + GPU dynamic query)
         ▼
 kiosk-presentmon-exporter (Windows service)  ──►  :9110/metrics  ──►  Prometheus ──► Grafana
 ```
 
-The exporter uses the SDK's **dynamic query**, which computes the statistics
-(`PERCENTILE_99`, `AVG`, …) over a configurable window inside the service. So we
-never see per-frame data — each scrape is one poll that returns already-aggregated
-numbers we drop straight into gauges. No client-side histograms, no CSV parsing.
+The exporter drains the SDK's **frame query** (the per-frame stream) and feeds
+every frame into Prometheus **histograms + counters**. Because those are
+cumulative, per-minute scraping loses nothing and Grafana reconstructs any
+quantile over any window at query time — the sub-second/per-minute mismatch
+disappears. GPU power/temp/util ride along as gauges from a small dynamic query.
 
 Both pieces run as **Windows services**, outside the Assigned-Access kiosk
 session, so true kiosk mode doesn't restrict them. The exporter finds the
@@ -33,16 +34,31 @@ signage process by name and re-tracks automatically when it restarts.
 
 | Metric | Type | Meaning |
 |---|---|---|
-| `presentmon_up` | gauge | 1 = target tracked & presenting, 0 = missing/idle |
-| `presentmon_cpu_frame_time_ms_p99` | gauge | 99th-pct app frame time (stutter) |
-| `presentmon_cpu_frame_time_ms_avg` | gauge | avg app frame time |
-| `presentmon_displayed_time_ms_p99` | gauge | 99th-pct on-screen frame interval |
-| `presentmon_displayed_fps` | gauge | avg displayed FPS |
-| `presentmon_presented_fps` | gauge | avg presented FPS |
-| `presentmon_dropped_frames` | gauge | dropped frames (windowed) |
-| `presentmon_gpu_power_watts` / `_temperature_celsius` / `_utilization_percent` | gauge | GPU telemetry |
+| `presentmon_up` | gauge | 1 = target tracked & producing frames, 0 = missing/idle |
+| `presentmon_frame_time_ms` | histogram | CPU frame time per frame (ms) |
+| `presentmon_displayed_time_ms` | histogram | on-screen interval per displayed frame (ms) |
+| `presentmon_frames_presented_total` | counter | all frames in the stream |
+| `presentmon_frames_displayed_total` | counter | frames that reached the screen |
+| `presentmon_frames_dropped_total` | counter | frames dropped (presented, never displayed) |
+| `presentmon_gpu_power_watts` / `_temperature_celsius` / `_utilization_percent` | gauge | GPU telemetry (off on GPU-less boxes) |
 
 All carry an `app` label. `instance`/host come from the Prometheus scrape config.
+
+### Grafana queries (any window, chosen at query time)
+
+```promql
+# Frame-time p99 over the last 5m — the stutter SLO
+histogram_quantile(0.99, sum by (le, instance) (rate(presentmon_displayed_time_ms_bucket[5m])))
+
+# Displayed FPS
+rate(presentmon_frames_displayed_total[1m])
+
+# Dropped frames per minute
+increase(presentmon_frames_dropped_total[1m])
+
+# Drop ratio (%)
+100 * rate(presentmon_frames_dropped_total[5m]) / rate(presentmon_frames_presented_total[5m])
+```
 
 ## Repository layout
 

@@ -124,4 +124,26 @@ internal static class PresentMonInterop
         uint processId,
         [In, Out] byte[] pBlob,
         ref uint numSwapChains);
+
+    // --- Frame query (per-frame stream) ---
+    // pBlobSize returns the byte stride of one frame's record; each query
+    // element's dataOffset is that value's offset within a frame record.
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern PM_STATUS pmRegisterFrameQuery(
+        IntPtr sessionHandle,
+        out IntPtr pHandle,
+        [In, Out] PM_QUERY_ELEMENT[] pElements,
+        ulong numElements,
+        out uint pBlobSize);
+
+    // pNumFramesToRead: in = buffer capacity (frames), out = frames actually written.
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern PM_STATUS pmConsumeFrames(
+        IntPtr handle,
+        uint processId,
+        [In, Out] byte[] pBlobs,
+        ref uint pNumFramesToRead);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    public static extern PM_STATUS pmFreeFrameQuery(IntPtr handle);
 }

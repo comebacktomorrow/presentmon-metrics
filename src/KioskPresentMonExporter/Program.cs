@@ -1,17 +1,17 @@
 using System.Diagnostics;
-using Microsoft.Extensions.Hosting.WindowsServices;
+using Microsoft.Extensions.Options;
 using Prometheus;
 
 namespace KioskPresentMonExporter;
 
 public sealed class ExporterOptions
 {
-    // Process to measure, WITHOUT the .exe suffix (e.g. "SignagePlayer").
+    // Process to measure, WITHOUT the .exe suffix (e.g. "SignagePlayer", "notepad").
     public string TargetProcessName { get; set; } = "";
     public int ListenPort { get; set; } = 9110;
-    public double WindowSizeMs { get; set; } = 1000;   // stat window for the dynamic query
-    public double MetricOffsetMs { get; set; } = 0;
-    public int PollIntervalMs { get; set; } = 1000;    // how often we refresh the gauges
+    public double GpuWindowMs { get; set; } = 1000;   // averaging window for GPU gauges
+    public uint FrameBatchSize { get; set; } = 512;   // frames drained per pmConsumeFrames call
+    public int PollIntervalMs { get; set; } = 1000;   // how often we drain the frame stream
 }
 
 public static class Program
@@ -31,33 +31,40 @@ internal sealed class PollerService : BackgroundService
     private readonly ExporterOptions _opt;
     private readonly ILogger<PollerService> _log;
 
-    // Gauges. instance/host labelling comes from Prometheus scrape config; we
-    // add "app" so a dashboard can distinguish players if the target ever changes.
     private static readonly string[] Labels = { "app" };
-    private static readonly Gauge Up = Metrics.CreateGauge(
-        "presentmon_up", "1 if the target process is being tracked and presenting, else 0.", Labels);
-    private static readonly Gauge FrameTimeP99 = Metrics.CreateGauge(
-        "presentmon_cpu_frame_time_ms_p99", "99th-pct CPU frame time over the window (ms). Stutter signal.", Labels);
-    private static readonly Gauge FrameTimeAvg = Metrics.CreateGauge(
-        "presentmon_cpu_frame_time_ms_avg", "Average CPU frame time over the window (ms).", Labels);
-    private static readonly Gauge DisplayedTimeP99 = Metrics.CreateGauge(
-        "presentmon_displayed_time_ms_p99", "99th-pct on-screen frame interval over the window (ms).", Labels);
-    private static readonly Gauge DisplayedTimeAvg = Metrics.CreateGauge(
-        "presentmon_displayed_time_ms_avg", "Average on-screen frame interval over the window (ms).", Labels);
-    private static readonly Gauge DisplayedFps = Metrics.CreateGauge(
-        "presentmon_displayed_fps", "Average displayed FPS over the window.", Labels);
-    private static readonly Gauge PresentedFps = Metrics.CreateGauge(
-        "presentmon_presented_fps", "Average presented FPS over the window.", Labels);
-    private static readonly Gauge DroppedFrames = Metrics.CreateGauge(
-        "presentmon_dropped_frames", "Dropped frames (windowed average).", Labels);
-    private static readonly Gauge GpuPower = Metrics.CreateGauge(
-        "presentmon_gpu_power_watts", "Average GPU power over the window (W).", Labels);
-    private static readonly Gauge GpuTemp = Metrics.CreateGauge(
-        "presentmon_gpu_temperature_celsius", "Average GPU temperature over the window (C).", Labels);
-    private static readonly Gauge GpuUtil = Metrics.CreateGauge(
-        "presentmon_gpu_utilization_percent", "Average GPU utilization over the window (%).", Labels);
 
-    public PollerService(Microsoft.Extensions.Options.IOptions<ExporterOptions> opt, ILogger<PollerService> log)
+    // Buckets in ms, tuned around 60 Hz (16.7) and 30 Hz (33.3) — the frame-pacing
+    // range that matters for signage smoothness.
+    private static readonly double[] FrameTimeBuckets =
+        { 6, 8, 10, 12, 14, 16.7, 20, 25, 33.3, 50, 66.7, 100, 250, 500 };
+
+    // Cumulative histograms: Grafana computes p99 over ANY window via
+    //   histogram_quantile(0.99, rate(presentmon_frame_time_ms_bucket[5m]))
+    private static readonly Histogram FrameTime = Metrics.CreateHistogram(
+        "presentmon_frame_time_ms", "CPU frame time per frame (ms).",
+        new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = Labels });
+    private static readonly Histogram DisplayedTime = Metrics.CreateHistogram(
+        "presentmon_displayed_time_ms", "On-screen interval per displayed frame (ms).",
+        new HistogramConfiguration { Buckets = FrameTimeBuckets, LabelNames = Labels });
+
+    // Cumulative counters: FPS = rate(...presented/displayed...), drops = increase(...dropped...)
+    private static readonly Counter FramesPresented = Metrics.CreateCounter(
+        "presentmon_frames_presented_total", "Frames presented (all frames in the stream).", Labels);
+    private static readonly Counter FramesDisplayed = Metrics.CreateCounter(
+        "presentmon_frames_displayed_total", "Frames that reached the screen (not dropped).", Labels);
+    private static readonly Counter FramesDropped = Metrics.CreateCounter(
+        "presentmon_frames_dropped_total", "Frames dropped (presented but never displayed).", Labels);
+
+    private static readonly Gauge Up = Metrics.CreateGauge(
+        "presentmon_up", "1 if the target process is tracked and producing frames, else 0.", Labels);
+    private static readonly Gauge GpuPower = Metrics.CreateGauge(
+        "presentmon_gpu_power_watts", "Windowed avg GPU power (W).", Labels);
+    private static readonly Gauge GpuTemp = Metrics.CreateGauge(
+        "presentmon_gpu_temperature_celsius", "Windowed avg GPU temperature (C).", Labels);
+    private static readonly Gauge GpuUtil = Metrics.CreateGauge(
+        "presentmon_gpu_utilization_percent", "Windowed avg GPU utilization (%).", Labels);
+
+    public PollerService(IOptions<ExporterOptions> opt, ILogger<PollerService> log)
     {
         _opt = opt.Value;
         _log = log;
@@ -71,9 +78,10 @@ internal sealed class PollerService : BackgroundService
         var app = _opt.TargetProcessName;
         using var server = new KestrelMetricServer(port: _opt.ListenPort);
         server.Start();
-        _log.LogInformation("Exposing /metrics on :{Port}, tracking '{App}'", _opt.ListenPort, app);
 
-        using var pm = new PresentMonSession(_opt.WindowSizeMs, _opt.MetricOffsetMs);
+        using var pm = new PresentMonSession(_opt.GpuWindowMs, _opt.FrameBatchSize);
+        _log.LogInformation("Exposing /metrics on :{Port}, tracking '{App}' (GPU telemetry: {Gpu})",
+            _opt.ListenPort, app, pm.GpuEnabled ? "on" : "off");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -87,24 +95,32 @@ internal sealed class PollerService : BackgroundService
                 else
                 {
                     pm.EnsureTracking(pid.Value);
-                    var m = pm.Poll(pid.Value);
-                    if (m is null)
+
+                    int drained = pm.DrainFrames(pid.Value, f =>
                     {
-                        Up.WithLabels(app).Set(0);   // tracked but not presenting yet
-                    }
-                    else
+                        if (IsSane(f.FrameTimeMs))
+                            FrameTime.WithLabels(app).Observe(f.FrameTimeMs);
+                        FramesPresented.WithLabels(app).Inc();
+                        if (f.Dropped)
+                        {
+                            FramesDropped.WithLabels(app).Inc();
+                        }
+                        else
+                        {
+                            FramesDisplayed.WithLabels(app).Inc();
+                            if (IsSane(f.DisplayedTimeMs))
+                                DisplayedTime.WithLabels(app).Observe(f.DisplayedTimeMs);
+                        }
+                    });
+
+                    Up.WithLabels(app).Set(drained > 0 ? 1 : 0);
+
+                    var gpu = pm.PollGpu(pid.Value);
+                    if (gpu is not null)
                     {
-                        Up.WithLabels(app).Set(1);
-                        FrameTimeP99.WithLabels(app).Set(m["cpu_frame_time_ms_p99"]);
-                        FrameTimeAvg.WithLabels(app).Set(m["cpu_frame_time_ms_avg"]);
-                        DisplayedTimeP99.WithLabels(app).Set(m["displayed_time_ms_p99"]);
-                        DisplayedTimeAvg.WithLabels(app).Set(m["displayed_time_ms_avg"]);
-                        DisplayedFps.WithLabels(app).Set(m["displayed_fps_avg"]);
-                        PresentedFps.WithLabels(app).Set(m["presented_fps_avg"]);
-                        DroppedFrames.WithLabels(app).Set(m["dropped_frames"]);
-                        GpuPower.WithLabels(app).Set(m["gpu_power_w"]);
-                        GpuTemp.WithLabels(app).Set(m["gpu_temperature_c"]);
-                        GpuUtil.WithLabels(app).Set(m["gpu_utilization_percent"]);
+                        SetIfSane(GpuPower, app, gpu["gpu_power_w"]);
+                        SetIfSane(GpuTemp, app, gpu["gpu_temperature_c"]);
+                        SetIfSane(GpuUtil, app, gpu["gpu_utilization_percent"]);
                     }
                 }
             }
@@ -118,12 +134,18 @@ internal sealed class PollerService : BackgroundService
         }
     }
 
+    private static bool IsSane(double v) => double.IsFinite(v) && v >= 0;
+
+    private static void SetIfSane(Gauge g, string app, double v)
+    {
+        if (IsSane(v)) g.WithLabels(app).Set(v);
+    }
+
     private static uint? FindPid(string processName)
     {
         var procs = Process.GetProcessesByName(processName);
         try
         {
-            // Kiosk mode runs a single foreground instance; take the first alive.
             return procs.Length > 0 ? (uint)procs[0].Id : null;
         }
         finally
