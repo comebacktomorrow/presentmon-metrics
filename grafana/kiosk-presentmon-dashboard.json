@@ -1,0 +1,75 @@
+{
+  "__comment": "Skeleton for the Git-Sync dashboards repo. Datasource UID is HARDCODED per fleet convention (never ${prom}). Replace PROM_DS_UID with the real Prometheus datasource UID before committing to the dashboards repo.",
+  "title": "Kiosk — Frame Pacing (PresentMon)",
+  "uid": "kiosk-presentmon",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "query": "label_values(presentmon_up, instance)",
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Presenting",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+      "fieldConfig": { "defaults": { "mappings": [
+        { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+      ] } },
+      "targets": [
+        { "expr": "presentmon_up{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Displayed FPS",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+      "targets": [
+        { "expr": "presentmon_displayed_fps{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Frame time p99 (ms) — on-screen cadence",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [
+        { "value": null, "color": "green" }, { "value": 33, "color": "red" }
+      ] } } },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+      "targets": [
+        { "expr": "presentmon_displayed_time_ms_p99{instance=~\"$instance\"}", "legendFormat": "{{instance}} p99" },
+        { "expr": "presentmon_cpu_frame_time_ms_p99{instance=~\"$instance\"}", "legendFormat": "{{instance}} cpu p99" }
+      ]
+    },
+    {
+      "title": "Dropped frames (windowed)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+      "targets": [
+        { "expr": "presentmon_dropped_frames{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "GPU util % / temp °C",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+      "targets": [
+        { "expr": "presentmon_gpu_utilization_percent{instance=~\"$instance\"}", "legendFormat": "{{instance}} util%" },
+        { "expr": "presentmon_gpu_temperature_celsius{instance=~\"$instance\"}", "legendFormat": "{{instance}} temp" }
+      ]
+    }
+  ]
+}
