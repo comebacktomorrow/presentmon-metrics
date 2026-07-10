@@ -1,17 +1,51 @@
 {
-  "title": "Kiosk — Visual Timeline (DEVBOX)",
+  "title": "Kiosk Fleet — Visual Timeline",
   "uid": "kiosk-visual-timeline",
   "schemaVersion": 39,
   "timezone": "browser",
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(kiosk_agent_info, environment)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 1,
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "site",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(kiosk_agent_info{environment=~\"$environment\"}, site)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 1,
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      },
+      {
+        "name": "location",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(kiosk_agent_info{site=~\"$site\"}, location)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 1,
+        "current": { "text": "All", "value": "$__all", "selected": true }
+      }
+    ]
+  },
   "panels": [
     {
       "type": "xzibit-kiosktimeline-panel",
-      "title": "DEVBOX screen — hover to scrub",
+      "title": "$site / $location — hover to scrub",
       "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
       "options": {
-        "sites": "dev",
+        "sites": "${site:csv}",
         "apiUrl": "http://localhost:8787",
         "hideEmpty": true,
         "apiKey": ""
