@@ -1,10 +1,4 @@
 {
-  "title": "Kiosk APM \u2014 Frame Pacing & Screen Timeline",
-  "uid": "kiosk-presentmon",
-  "schemaVersion": 39,
-  "timezone": "browser",
-  "refresh": "5s",
-  "graphTooltip": 1,
   "annotations": {
     "list": [
       {
@@ -26,6 +20,7 @@
         },
         "enable": true,
         "expr": "kiosk_app_start_time_seconds{instance=~\"$instance\"} > $__from < $__to",
+        "hide": false,
         "iconColor": "light-blue",
         "name": "App restart",
         "tagKeys": "instance,site,location",
@@ -40,6 +35,7 @@
         },
         "enable": true,
         "expr": "ALERTS{alertname=\"KioskAppFrozen\", instance=~\"$instance\"}",
+        "hide": false,
         "iconColor": "red",
         "name": "Freeze (KioskAppFrozen)",
         "step": "10s",
@@ -49,355 +45,520 @@
       }
     ]
   },
-  "templating": {
-    "list": [
-      {
-        "name": "environment",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "query": "label_values(kiosk_agent_info, environment)",
-        "includeAll": true,
-        "multi": true,
-        "refresh": 1,
-        "current": {
-          "text": "All",
-          "value": "$__all",
-          "selected": true
-        }
-      },
-      {
-        "name": "site",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "query": "label_values(kiosk_agent_info{environment=~\"$environment\"}, site)",
-        "includeAll": true,
-        "multi": true,
-        "refresh": 1,
-        "current": {
-          "text": "All",
-          "value": "$__all",
-          "selected": true
-        }
-      },
-      {
-        "name": "location",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "query": "label_values(kiosk_agent_info{site=~\"$site\"}, location)",
-        "includeAll": true,
-        "multi": true,
-        "refresh": 1,
-        "current": {
-          "text": "All",
-          "value": "$__all",
-          "selected": true
-        }
-      },
-      {
-        "name": "instance",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "query": "label_values(kiosk_agent_info{location=~\"$location\"}, instance)",
-        "includeAll": true,
-        "multi": true,
-        "refresh": 1,
-        "current": {
-          "text": "All",
-          "value": "$__all",
-          "selected": true
-        }
-      }
-    ]
-  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "liveNow": false,
   "panels": [
     {
-      "type": "xzibit-kiosktimeline-panel",
-      "title": "$location screen \u2014 hover to scrub, correlate against the graphs below",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
         "y": 0
       },
+      "id": 1,
       "options": {
-        "sites": "${site:csv}",
-        "apiUrl": "http://localhost:8787",
-        "hideEmpty": true,
+        "annotationLanes": "shared",
         "apiKey": "",
-        "showAnnotations": true
-      }
+        "apiUrl": "http://localhost:8787",
+        "followCrosshair": true,
+        "headerMode": "bar",
+        "hideEmpty": true,
+        "imageFit": "fit",
+        "mode": "timeline",
+        "showAnnotations": true,
+        "showDetails": false,
+        "sites": "${site:csv}",
+        "tagFilter": ""
+      },
+      "pluginVersion": "0.9.6",
+      "targets": [
+        {
+          "refId": "A"
+        }
+      ],
+      "title": "$location screen \u2014 hover to scrub, correlate against the graphs below",
+      "type": "xzibit-kiosktimeline-panel"
     },
     {
-      "type": "state-timeline",
-      "title": "Layer states \u2014 which layer broke first (reporting \u25b8 display \u25b8 app \u25b8 render)",
-      "description": "Observed state per layer, plus the derived kiosk:state (recording rule). Faults are observed\u2260intended at the highest explaining layer: planned states render blue, faults red/orange. Gaps = host not reporting.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        }
+      },
       "gridPos": {
-        "h": 6,
+        "h": 8,
         "w": 24,
         "x": 0,
         "y": 8
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "max by (instance) (up{job=\"integrations/windows_exporter\", instance=~\"$instance\"})",
-          "legendFormat": "reporting \u00b7 {{instance}}",
-          "refId": "A"
-        },
-        {
-          "expr": "kiosk:display_on{instance=~\"$instance\"}",
-          "legendFormat": "display \u00b7 {{instance}}",
-          "refId": "B"
-        },
-        {
-          "expr": "kiosk:app_up{instance=~\"$instance\"}",
-          "legendFormat": "app \u00b7 {{instance}}",
-          "refId": "C"
-        },
-        {
-          "expr": "kiosk:presenting{instance=~\"$instance\"}",
-          "legendFormat": "presenting \u00b7 {{instance}}",
-          "refId": "D"
-        },
-        {
-          "expr": "kiosk:state{instance=~\"$instance\"}",
-          "legendFormat": "STATE \u00b7 {{instance}}",
-          "refId": "E"
-        }
-      ],
+      "id": 9,
       "options": {
-        "mergeValues": true,
-        "showValue": "never",
-        "rowHeight": 0.85,
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Turbo",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
         "legend": {
-          "showLegend": false
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "showColorScale": false,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisLabel": "fps",
+          "axisPlacement": "left",
+          "decimals": 0,
+          "reverse": false,
+          "unit": "none"
         }
       },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "fillOpacity": 70,
-            "lineWidth": 0
+      "pluginVersion": "13.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
           },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "off",
-                  "color": "red"
-                },
-                "1": {
-                  "text": "on",
-                  "color": "green"
-                }
-              }
-            }
-          ],
-          "min": 0,
-          "max": 1
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "E"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "type": "value",
-                    "options": {
-                      "0": {
-                        "text": "OK",
-                        "color": "green"
-                      },
-                      "1": {
-                        "text": "APP STOPPED (planned)",
-                        "color": "blue"
-                      },
-                      "2": {
-                        "text": "SCREEN ASLEEP (planned)",
-                        "color": "blue"
-                      },
-                      "10": {
-                        "text": "DARK \u2014 NOT INTENDED",
-                        "color": "orange"
-                      },
-                      "11": {
-                        "text": "APP CRASHED",
-                        "color": "red"
-                      },
-                      "12": {
-                        "text": "FROZEN",
-                        "color": "red"
-                      }
-                    }
-                  }
-                ]
-              },
-              {
-                "id": "max",
-                "value": 12
-              }
-            ]
-          }
-        ]
-      }
+          "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Displayed FPS distribution (heatmap)",
+      "type": "heatmap"
     },
     {
-      "title": "Presenting",
-      "type": "stat",
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 14
-      },
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "DOWN",
-                  "color": "red"
-                },
-                "1": {
-                  "text": "UP",
-                  "color": "green"
-                }
-              }
-            }
-          ]
-        }
-      },
-      "targets": [
-        {
-          "expr": "presentmon_up{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}}"
-        }
-      ]
-    },
-    {
-      "title": "Displayed FPS (rolling avg \u2014 exact, from the frame counter)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 9,
-        "x": 6,
-        "y": 14
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
-            "axisLabel": "fps"
-          }
-        }
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "rate(presentmon_displayed_fps_hist_count{instance=~\"$instance\"}[$__rate_interval])",
-          "legendFormat": "{{instance}} displayed fps"
-        },
-        {
-          "expr": "rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[$__rate_interval])",
-          "legendFormat": "{{instance}} presented fps"
-        }
-      ]
-    },
-    {
-      "title": "Frame time (ms) \u2014 p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 9,
-        "x": 15,
-        "y": 14
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "fps",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
           "thresholds": {
+            "mode": "absolute",
             "steps": [
               {
-                "value": null,
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
-                "value": 33,
-                "color": "red"
+                "color": "red",
+                "value": 80
               }
             ]
-          }
+          },
+          "unit": "none"
         }
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "1000 / histogram_quantile(0.50, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{instance}} p50"
-        },
-        {
-          "expr": "1000 / histogram_quantile(0.01, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{instance}} p99"
-        },
-        {
-          "expr": "1000 / histogram_quantile(0.001, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{instance}} p99.9"
-        }
-      ]
-    },
-    {
-      "title": "App CPU / memory (context for a stutter or freeze)",
-      "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 22
+        "y": 16
       },
+      "id": 4,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(presentmon_displayed_fps_hist_count{instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}} displayed fps",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}} presented fps",
+          "refId": "B"
+        }
+      ],
+      "title": "Displayed FPS (rolling avg \u2014 exact, from the frame counter)",
+      "type": "timeseries"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
-            "axisLabel": ""
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 33
+              }
+            ]
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1000 / histogram_quantile(0.50, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{instance}} p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1000 / histogram_quantile(0.01, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{instance}} p99",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1000 / histogram_quantile(0.001, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{instance}} p99.9",
+          "refId": "C"
+        }
+      ],
+      "title": "Frame time (ms) \u2014 p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 8,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(presentmon_frames_dropped_total{instance=~\"$instance\"}[1m])",
+          "legendFormat": "{{instance}} dropped/min",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "100 * rate(presentmon_frames_dropped_total{instance=~\"$instance\"}[5m]) / rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} drop %",
+          "refId": "B"
+        }
+      ],
+      "title": "Dropped frames / min & drop ratio",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -427,37 +588,115 @@
           }
         ]
       },
+      "gridPos": {
+        "h": 7,
+        "w": 13,
+        "x": 0,
+        "y": 24
+      },
+      "id": 6,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.1.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "rate(kiosk_app_cpu_seconds_total{instance=~\"$instance\"}[5m])",
-          "legendFormat": "{{instance}} CPU"
+          "legendFormat": "{{instance}} CPU",
+          "refId": "A"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "kiosk_app_working_set_bytes{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}} memory"
+          "legendFormat": "{{instance}} memory",
+          "refId": "B"
         }
-      ]
+      ],
+      "title": "App CPU / memory (context for a stutter or freeze)",
+      "type": "timeseries"
     },
     {
-      "title": "App GPU (load / temp / VRAM / clock \u2014 throttle shows as clock dropping under load)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 22
-      },
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
-            "axisLabel": ""
-          }
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
         },
         "overrides": [
           {
@@ -506,89 +745,455 @@
           }
         ]
       },
+      "gridPos": {
+        "h": 7,
+        "w": 11,
+        "x": 13,
+        "y": 24
+      },
+      "id": 7,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "enableFacetedFilter": false,
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.1.0",
       "targets": [
         {
-          "expr": "{__name__=~\"ohm_gpu(nvidia|amd|intel)_load_percent\", sensor=\"GPU Core\", instance=~\"$instance\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "{__name__=~\"ohm_gpu(nvidia|amd|intel)_load_percent\", sensor=\"D3D 3D\", instance=~\"$instance\"}",
           "legendFormat": "{{instance}} GPU load",
+          "range": true,
           "refId": "A"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "{__name__=~\"ohm_gpu(nvidia|amd|intel)_celsius\", sensor=\"GPU Core\", instance=~\"$instance\"}",
+          "hide": true,
           "legendFormat": "{{instance}} GPU temp",
           "refId": "B"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "{__name__=~\"ohm_gpu(nvidia|amd)_bytes\", sensor=\"GPU Memory Used\", instance=~\"$instance\"}",
           "legendFormat": "{{instance}} VRAM used",
           "refId": "C"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "{__name__=~\"ohm_gpu(nvidia|amd)_hertz\", sensor=\"GPU Core\", instance=~\"$instance\"}",
+          "hide": true,
           "legendFormat": "{{instance}} GPU clock",
           "refId": "D"
         }
-      ]
+      ],
+      "title": "App GPU (load / temp / VRAM / clock \u2014 throttle shows as clock dropping under load)",
+      "type": "timeseries"
     },
     {
-      "title": "Dropped frames / min & drop ratio",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 22
-      },
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "targets": [
-        {
-          "expr": "increase(presentmon_frames_dropped_total{instance=~\"$instance\"}[1m])",
-          "legendFormat": "{{instance}} dropped/min"
-        },
-        {
-          "expr": "100 * rate(presentmon_frames_dropped_total{instance=~\"$instance\"}[5m]) / rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[5m])",
-          "legendFormat": "{{instance}} drop %"
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "UP"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
         }
-      ]
-    },
-    {
-      "title": "Displayed FPS distribution (heatmap)",
-      "type": "heatmap",
+      },
       "gridPos": {
-        "h": 8,
-        "w": 24,
+        "h": 5,
+        "w": 7,
         "x": 0,
-        "y": 30
+        "y": 31
       },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
       },
+      "pluginVersion": "13.1.0",
       "targets": [
         {
-          "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))",
-          "format": "heatmap",
-          "legendFormat": "{{le}}",
-          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "presentmon_up{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ],
-      "options": {
-        "calculate": false,
-        "cellGap": 1,
-        "color": {
-          "mode": "scheme",
-          "scheme": "Turbo",
-          "steps": 64
+      "title": "Presenting",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Observed state per layer, plus the derived kiosk:state (recording rule). Faults are observed\u2260intended at the highest explaining layer: planned states render blue, faults red/orange. Gaps = host not reporting.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "off"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "on"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
         },
-        "yAxis": {
-          "unit": "none",
-          "axisLabel": "fps",
-          "decimals": 0
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "E"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "green",
+                        "text": "OK"
+                      },
+                      "1": {
+                        "color": "blue",
+                        "text": "APP STOPPED (planned)"
+                      },
+                      "10": {
+                        "color": "orange",
+                        "text": "DARK \u2014 NOT INTENDED"
+                      },
+                      "11": {
+                        "color": "red",
+                        "text": "APP CRASHED"
+                      },
+                      "12": {
+                        "color": "red",
+                        "text": "FROZEN"
+                      },
+                      "2": {
+                        "color": "blue",
+                        "text": "SCREEN ASLEEP (planned)"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "max",
+                "value": 12
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 17,
+        "x": 7,
+        "y": 31
+      },
+      "id": 2,
+      "options": {
+        "alignValue": "left",
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "displayMode": "list",
+          "overflow": "ellipsis",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "never",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
         }
-      }
+      },
+      "pluginVersion": "13.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (instance) (up{job=\"integrations/windows_exporter\", instance=~\"$instance\"})",
+          "legendFormat": "reporting \u00b7 {{instance}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "kiosk:display_on{instance=~\"$instance\"}",
+          "legendFormat": "display \u00b7 {{instance}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "kiosk:app_up{instance=~\"$instance\"}",
+          "legendFormat": "app \u00b7 {{instance}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "kiosk:presenting{instance=~\"$instance\"}",
+          "legendFormat": "presenting \u00b7 {{instance}}",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "kiosk:state{instance=~\"$instance\"}",
+          "legendFormat": "STATE \u00b7 {{instance}}",
+          "refId": "E"
+        }
+      ],
+      "title": "Layer states \u2014 which layer broke first (reporting \u25b8 display \u25b8 app \u25b8 render)",
+      "type": "state-timeline"
     }
-  ]
+  ],
+  "preload": false,
+  "refresh": "5s",
+  "schemaVersion": 42,
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "environment",
+        "options": [],
+        "query": "label_values(kiosk_agent_info, environment)",
+        "refresh": 1,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "site",
+        "options": [],
+        "query": "label_values(kiosk_agent_info{environment=~\"$environment\"}, site)",
+        "refresh": 1,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "location",
+        "options": [],
+        "query": "label_values(kiosk_agent_info{site=~\"$site\"}, location)",
+        "refresh": 1,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": "label_values(kiosk_agent_info{location=~\"$location\"}, instance)",
+        "refresh": 1,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Kiosk APM \u2014 Frame Pacing & Screen Timeline",
+  "uid": "kiosk-presentmon"
 }
