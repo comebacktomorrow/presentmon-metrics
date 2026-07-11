@@ -386,7 +386,7 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 22
       },
@@ -439,12 +439,103 @@
       ]
     },
     {
+      "title": "App GPU (load / temp / VRAM / clock \u2014 throttle shows as clock dropping under load)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*temp.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*VRAM.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*clock.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "hertz"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "{__name__=~\"ohm_gpu(nvidia|amd|intel)_load_percent\", sensor=\"GPU Core\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} GPU load",
+          "refId": "A"
+        },
+        {
+          "expr": "{__name__=~\"ohm_gpu(nvidia|amd|intel)_celsius\", sensor=\"GPU Core\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} GPU temp",
+          "refId": "B"
+        },
+        {
+          "expr": "{__name__=~\"ohm_gpu(nvidia|amd)_bytes\", sensor=\"GPU Memory Used\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} VRAM used",
+          "refId": "C"
+        },
+        {
+          "expr": "{__name__=~\"ohm_gpu(nvidia|amd)_hertz\", sensor=\"GPU Core\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} GPU clock",
+          "refId": "D"
+        }
+      ]
+    },
+    {
       "title": "Dropped frames / min & drop ratio",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 22
       },
       "datasource": {
