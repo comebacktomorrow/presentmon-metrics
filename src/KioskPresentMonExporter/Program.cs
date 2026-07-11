@@ -15,6 +15,14 @@ public sealed class ExporterOptions
     public uint FrameBatchSize { get; set; } = 512;   // frames drained per pmConsumeFrames call
     public int PollIntervalMs { get; set; } = 1000;   // how often we drain the frame stream
 
+    // Idle grace: presentmon_up stays 1 for this long after the LAST frame.
+    // Windows apps present only on damage, so static content legitimately
+    // presents nothing for stretches — without the grace, `up` flaps on every
+    // pause in screen activity and every state derived from it bounces too.
+    // A vanished process is still a hard 0 (no grace). 0 = old per-poll
+    // semantics.
+    public int IdleGraceSeconds { get; set; } = 120;
+
     // Which metric families to EMIT. `up` and frames_dropped_total are always on.
     // What actually ships to a backend is a separate concern (scrape/keep-list);
     // this controls what the exporter exposes at all. All default on.
@@ -91,7 +99,7 @@ internal sealed class PollerService : BackgroundService
         var fpsBuckets   = (_opt.Metrics.FpsBuckets is { Length: > 0 } pb) ? pb : DefaultFpsBuckets;
 
         _up = f.CreateGauge("presentmon_up",
-            "1 if the target process is tracked and producing frames, else 0.", labels);
+            "1 if the target process is tracked and has presented within IdleGraceSeconds (static content presents nothing); 0 when frames stop past the grace or the process is gone (no grace).", labels);
         _dropped = f.CreateCounter("presentmon_frames_dropped_total",
             "Frames dropped (presented but never displayed).", labels);
         if (_opt.Metrics.FrameTimeMs)
@@ -129,6 +137,7 @@ internal sealed class PollerService : BackgroundService
 
         uint currentPid = 0;   // the PID we're currently tracking among name matches
         int unproductive = 0;  // consecutive zero-frame cycles on currentPid
+        var lastFrameUtc = DateTime.MinValue;   // when the tracked pid last presented
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -137,7 +146,10 @@ internal sealed class PollerService : BackgroundService
                 var candidates = CandidatePids();
                 if (candidates.Length == 0)
                 {
+                    // process GONE is a hard down — the grace is for content
+                    // that stops changing, not for an app that stopped existing
                     currentPid = 0;
+                    lastFrameUtc = DateTime.MinValue;
                     _up.WithLabels(_app).Set(0);
                 }
                 else
@@ -161,7 +173,11 @@ internal sealed class PollerService : BackgroundService
                         }
                     });
 
-                    _up.WithLabels(_app).Set(drained > 0 ? 1 : 0);
+                    if (drained > 0) lastFrameUtc = DateTime.UtcNow;
+                    bool withinGrace = _opt.IdleGraceSeconds > 0
+                        && lastFrameUtc != DateTime.MinValue
+                        && (DateTime.UtcNow - lastFrameUtc).TotalSeconds <= _opt.IdleGraceSeconds;
+                    _up.WithLabels(_app).Set(drained > 0 || withinGrace ? 1 : 0);
 
                     // Converge on the PRESENTING pid: if this match isn't producing frames,
                     // give it a couple cycles then rotate to the next name-match. Auto-finds
