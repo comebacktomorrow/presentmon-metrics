@@ -4,38 +4,62 @@
   "schemaVersion": 39,
   "timezone": "browser",
   "refresh": "30s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "environment",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info, environment)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       },
       {
         "name": "site",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info{environment=~\"$environment\"}, site)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       },
       {
         "name": "location",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info{site=~\"$site\"}, location)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       }
     ]
   },
@@ -43,7 +67,12 @@
     {
       "type": "xzibit-kiosktimeline-panel",
       "title": "$site / $location — hover to scrub",
-      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "sites": "${site:csv}",
         "apiUrl": "http://localhost:8787",
@@ -51,5 +80,33 @@
         "apiKey": ""
       }
     }
-  ]
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "App crashes",
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "red",
+        "expr": "{job=\"kiosk-logs\"} |= \"app exited unexpectedly\"",
+        "tagKeys": "host"
+      }
+    ]
+  }
 }

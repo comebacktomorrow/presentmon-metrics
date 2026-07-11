@@ -33,10 +33,16 @@ groups:
         expr: max by (instance) (kiosk_display_intended_off)
       - record: kiosk:presenting
         expr: max by (instance) (presentmon_up)
+      # freeze-detection contract: presents-based status is OPT-IN per host
+      # (kiosk-scripts freezeAlertSeconds; 0/absent = this host's content may
+      # legitimately sit still, never derive state from presents)
+      - record: kiosk:freeze_alert_seconds
+        expr: max by (instance) (kiosk_app_freeze_alert_seconds)
       - record: kiosk:state
         expr: |
           (
             (12 * ((kiosk:app_up == bool 1) * (kiosk:presenting == bool 0))) > 0
+              and on (instance) (kiosk:freeze_alert_seconds > 0)
               unless on (instance) (kiosk:display_on == 0)
           )
           or on (instance) (
@@ -57,39 +63,56 @@ groups:
 
   - name: kiosk
     rules:
-      # THE freeze alert: the app process is alive but producing no frames —
-      # crash-to-dialog, hang, or GPU TDR aftermath. "healthy but dead."
-      # Requires presentmon to target the SAME app kiosk-scripts manages.
+      # THE PRIMARY health alert: the app is expected up, nobody asked it to
+      # stop, and it is down. Content-agnostic — this is the signal every
+      # kiosk gets regardless of whether its content animates.
+      # (kiosk_app_intended_down absent on older kiosk-scripts => unless is a
+      # no-op and semantics degrade gracefully to expected-and-down.)
+      - alert: KioskAppDown
+        expr: ((kiosk_app_expected == 1) and on(instance) (kiosk_app_up == 0)) unless on(instance) (kiosk_app_intended_down == 1)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }}: app down, not on purpose"
+          description: "kiosk_app_expected=1, kiosk_app_up=0, no intentional stop recorded — crashed and not respawned."
+
+      # Crash EVENT: an exit nobody requested, even if the watchdog respawned
+      # it seconds later (KioskAppDown never fires then, but the crash still
+      # happened and should leave a mark + timeline annotation).
+      - alert: KioskAppCrashed
+        expr: increase(kiosk_app_unexpected_exits_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: app crashed (exit nobody requested)"
+          description: "kiosk_app_unexpected_exits_total increased — the app exited without a requested stop (watchdog may have already respawned it)."
+
+      # Freeze detection: OPT-IN per host with a stillness budget. "The app
+      # has presented NOTHING for longer than this host promised it ever
+      # would." Static content legitimately presents nothing, so hosts only
+      # get this alert by setting kiosk-scripts freezeAlertSeconds > 0
+      # (continuously-animating apps: players, dashboards, video walls).
       #
-      # for: MUST stay >= ~1m. When the exporter service restarts (any version/
-      # config reconcile) it comes up with no tracked PID and sweeps the app's
-      # candidate PIDs to find the presenter — ~30s for a multi-process app like
-      # Chrome, +one scrape interval. During that window presentmon_up=0 while
-      # kiosk_app_up=1, i.e. this exact condition. 3m rides over it with margin.
-      #
-      # DISPLAY-AWARE: a powered-down display stalls DWM composition, so
-      # PresentMon reads 0 with a perfectly healthy app (Jul 2026 DEVBOX:
-      # "turn off display after 15 min" looked exactly like a freeze for
-      # hours). `unless ... == 0` suppresses only when the display is KNOWN
-      # off — hosts not yet emitting kiosk_display_on keep old semantics.
+      # presentmon_last_present_timestamp_seconds initializes to service
+      # start, so exporter restarts don't read as an eternity of stillness.
+      # DISPLAY-AWARE: a powered-down display stalls DWM composition (Jul
+      # 2026 DEVBOX incident), so known-off displays suppress.
       - alert: KioskAppFrozen
-        expr: ((kiosk_app_up == 1) and on(instance) (presentmon_up == 0)) unless on(instance) (kiosk_display_on == 0)
-        for: 3m
+        expr: |
+          (
+            (time() - max by (instance) (presentmon_last_present_timestamp_seconds))
+              > on (instance) group_left ()
+            (max by (instance) (kiosk_app_freeze_alert_seconds) > 0)
+          )
+          and on (instance) (kiosk_app_up == 1)
+          unless on (instance) (kiosk_display_on == 0)
+        for: 1m
         labels:
           severity: critical
         annotations:
           summary: "{{ $labels.instance }}: app alive but not rendering"
-          description: "kiosk_app_up=1 but presentmon_up=0 (display known on) — process healthy but no frames presenting (crash-to-dialog, freeze, or GPU TDR aftermath)."
-
-      # Simpler backstop: not presenting at all (covers app-down or frozen).
-      # Same display-off suppression as above.
-      - alert: KioskNotPresenting
-        expr: (presentmon_up == 0) unless on(instance) (kiosk_display_on == 0)
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "{{ $labels.instance }} / {{ $labels.app }}: no frames for 5m"
+          description: "No frames presented for {{ $value | humanizeDuration }} (host's freeze budget exceeded; display known on, process alive) — crash-to-dialog, hang, or GPU TDR aftermath."
 
       # Display is dark and we did NOT ask for it (system controller
       # /sleepDisplay sets kiosk_display_intended_off=1; /wakeDisplay clears

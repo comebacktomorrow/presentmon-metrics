@@ -42,6 +42,18 @@
         "tagKeys": "instance,site,location,alertstate",
         "textFormat": "{{instance}} frozen",
         "titleFormat": "App frozen"
+      },
+      {
+        "name": "App crashes",
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "red",
+        "expr": "{job=\"kiosk-logs\"} |= \"app exited unexpectedly\"",
+        "tagKeys": "host"
       }
     ]
   },
@@ -78,7 +90,7 @@
           "refId": "A"
         }
       ],
-      "title": "$location screen \u2014 hover to scrub, correlate against the graphs below",
+      "title": "$location screen — hover to scrub, correlate against the graphs below",
       "type": "xzibit-kiosktimeline-panel"
     },
     {
@@ -272,7 +284,7 @@
           "refId": "B"
         }
       ],
-      "title": "Displayed FPS (rolling avg \u2014 exact, from the frame counter)",
+      "title": "Displayed FPS (rolling avg — exact, from the frame counter)",
       "type": "timeseries"
     },
     {
@@ -391,7 +403,7 @@
           "refId": "C"
         }
       ],
-      "title": "Frame time (ms) \u2014 p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
+      "title": "Frame time (ms) — p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
       "type": "timeseries"
     },
     {
@@ -814,7 +826,7 @@
           "refId": "D"
         }
       ],
-      "title": "App GPU (load / temp / VRAM / clock \u2014 throttle shows as clock dropping under load)",
+      "title": "App GPU (load / temp / VRAM / clock — throttle shows as clock dropping under load)",
       "type": "timeseries"
     },
     {
@@ -898,7 +910,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Observed state per layer, plus the derived kiosk:state (recording rule). Faults are observed\u2260intended at the highest explaining layer: planned states render blue, faults red/orange. Gaps = host not reporting.",
+      "description": "Observed state per layer, plus the derived kiosk:state (recording rule). Faults are observed≠intended at the highest explaining layer: planned states render blue, faults red/orange. Gaps = host not reporting.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -969,7 +981,7 @@
                       },
                       "10": {
                         "color": "orange",
-                        "text": "DARK \u2014 NOT INTENDED"
+                        "text": "DARK — NOT INTENDED"
                       },
                       "11": {
                         "color": "red",
@@ -1032,7 +1044,7 @@
             "uid": "prometheus"
           },
           "expr": "max by (instance) (up{job=\"integrations/windows_exporter\", instance=~\"$instance\"})",
-          "legendFormat": "reporting \u00b7 {{instance}}",
+          "legendFormat": "reporting · {{instance}}",
           "refId": "A"
         },
         {
@@ -1041,7 +1053,7 @@
             "uid": "prometheus"
           },
           "expr": "kiosk:display_on{instance=~\"$instance\"}",
-          "legendFormat": "display \u00b7 {{instance}}",
+          "legendFormat": "display · {{instance}}",
           "refId": "B"
         },
         {
@@ -1050,7 +1062,7 @@
             "uid": "prometheus"
           },
           "expr": "kiosk:app_up{instance=~\"$instance\"}",
-          "legendFormat": "app \u00b7 {{instance}}",
+          "legendFormat": "app · {{instance}}",
           "refId": "C"
         },
         {
@@ -1059,7 +1071,7 @@
             "uid": "prometheus"
           },
           "expr": "kiosk:presenting{instance=~\"$instance\"}",
-          "legendFormat": "presenting \u00b7 {{instance}}",
+          "legendFormat": "presenting · {{instance}}",
           "refId": "D"
         },
         {
@@ -1068,11 +1080,11 @@
             "uid": "prometheus"
           },
           "expr": "kiosk:state{instance=~\"$instance\"}",
-          "legendFormat": "STATE \u00b7 {{instance}}",
+          "legendFormat": "STATE · {{instance}}",
           "refId": "E"
         }
       ],
-      "title": "Layer states \u2014 which layer broke first (reporting \u25b8 display \u25b8 app \u25b8 render)",
+      "title": "Layer states — which layer broke first (reporting ▸ display ▸ app ▸ render)",
       "type": "state-timeline"
     }
   ],
@@ -1194,6 +1206,6 @@
     ]
   },
   "timezone": "browser",
-  "title": "Kiosk APM \u2014 Frame Pacing & Screen Timeline",
+  "title": "Kiosk APM — Frame Pacing & Screen Timeline",
   "uid": "kiosk-presentmon"
 }

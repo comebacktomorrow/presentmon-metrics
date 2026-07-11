@@ -68,6 +68,7 @@ internal sealed class PollerService : BackgroundService
     private readonly Histogram? _displayedFpsHist;
     private readonly Counter _dropped;
     private readonly Gauge _up;
+    private readonly Gauge _lastPresent;
 
     // Default buckets in ms. DENSE around common refresh rates (8.3=120Hz, 16.7=60Hz)
     // so the mass doesn't collapse into one wide bucket (bad histogram_quantile interp),
@@ -102,6 +103,12 @@ internal sealed class PollerService : BackgroundService
             "1 if the target process is tracked and has presented within IdleGraceSeconds (static content presents nothing); 0 when frames stop past the grace or the process is gone (no grace).", labels);
         _dropped = f.CreateCounter("presentmon_frames_dropped_total",
             "Frames dropped (presented but never displayed).", labels);
+        // Unix time of the last drained present. Initialized to SERVICE START,
+        // not 0: on startup nothing has been seen yet, and time()-0 would read
+        // as an eternity of stillness — a restart on static content must not
+        // false-fire per-host freeze alerts (time() - this > threshold).
+        _lastPresent = f.CreateGauge("presentmon_last_present_timestamp_seconds",
+            "Unix time the tracked process last presented a frame (initialized to service start). Alert on time() - this exceeding a per-host stillness budget.", labels);
         if (_opt.Metrics.FrameTimeMs)
             _frameTime = f.CreateHistogram("presentmon_frame_time_ms",
                 "CPU frame time per frame (ms).",
@@ -121,6 +128,7 @@ internal sealed class PollerService : BackgroundService
         // reads as 0, not absent — otherwise increase()/rate() return No Data and
         // panels/alerts break until the first event.
         _up.WithLabels(_app).Set(0);
+        _lastPresent.WithLabels(_app).Set(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _dropped.WithLabels(_app).Inc(0);
         _frameTime?.WithLabels(_app);
         _displayedTime?.WithLabels(_app);
@@ -173,7 +181,11 @@ internal sealed class PollerService : BackgroundService
                         }
                     });
 
-                    if (drained > 0) lastFrameUtc = DateTime.UtcNow;
+                    if (drained > 0)
+                    {
+                        lastFrameUtc = DateTime.UtcNow;
+                        _lastPresent.WithLabels(_app).Set(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    }
                     bool withinGrace = _opt.IdleGraceSeconds > 0
                         && lastFrameUtc != DateTime.MinValue
                         && (DateTime.UtcNow - lastFrameUtc).TotalSeconds <= _opt.IdleGraceSeconds;
