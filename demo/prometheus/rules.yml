@@ -1,4 +1,60 @@
 groups:
+  # ---------------------------------------------------------------------------
+  # The kiosk state machine, encoded ONCE. Layers: power > display > app >
+  # render > uploads. Each layer has an OBSERVED fact and an INTENDED fact;
+  # "fault" is always observed != intended at the highest layer that explains
+  # it. Dashboards and alerts render kiosk:state instead of re-deriving the
+  # taxonomy with their own unless-chains.
+  #
+  # Values (all states mutually exclusive by construction -- each planned
+  # state requires the intent that its fault-twin excludes):
+  #    0 ok
+  #    1 app stopped (intentional -- app controller /stopapp)
+  #    2 screen asleep (intentional -- /sleepDisplay)
+  #   10 display dark, NOT intended (power-policy regression, handoff failure)
+  #   11 app crashed (expected up, not intentionally stopped, down)
+  #   12 frozen (app up, display on, no frames presenting)
+  # Host offline is NOT here: an absent instance emits nothing, which renders
+  # as a gap (dashboards) and is alerted via staleness/absent rules (cloud).
+  # kiosk_app_intended_down ships with kiosk-scripts v1.2.13; until then that
+  # input is absent and states 1/11-suppression simply never match.
+  - name: kiosk-state
+    interval: 15s
+    rules:
+      - record: kiosk:app_expected
+        expr: max by (instance) (kiosk_app_expected)
+      - record: kiosk:app_up
+        expr: max by (instance) (kiosk_app_up)
+      - record: kiosk:app_intended_down
+        expr: max by (instance) (kiosk_app_intended_down)
+      - record: kiosk:display_on
+        expr: max by (instance) (kiosk_display_on)
+      - record: kiosk:display_intended_off
+        expr: max by (instance) (kiosk_display_intended_off)
+      - record: kiosk:presenting
+        expr: max by (instance) (presentmon_up)
+      - record: kiosk:state
+        expr: |
+          (
+            (12 * ((kiosk:app_up == bool 1) * (kiosk:presenting == bool 0))) > 0
+              unless on (instance) (kiosk:display_on == 0)
+          )
+          or on (instance) (
+            (11 * ((kiosk:app_expected == bool 1) * (kiosk:app_up == bool 0))) > 0
+              unless on (instance) (kiosk:app_intended_down == 1)
+          )
+          or on (instance) (
+            (10 * (kiosk:display_on == bool 0)) > 0
+              unless on (instance) (kiosk:display_intended_off == 1)
+          )
+          or on (instance) (
+            (2 * ((kiosk:display_on == bool 0) * (kiosk:display_intended_off == bool 1))) > 0
+          )
+          or on (instance) (
+            (1 * ((kiosk:app_up == bool 0) * (kiosk:app_intended_down == bool 1))) > 0
+          )
+          or on (instance) (0 * kiosk:app_up)
+
   - name: kiosk
     rules:
       # THE freeze alert: the app process is alive but producing no frames —
@@ -10,20 +66,59 @@ groups:
       # candidate PIDs to find the presenter — ~30s for a multi-process app like
       # Chrome, +one scrape interval. During that window presentmon_up=0 while
       # kiosk_app_up=1, i.e. this exact condition. 3m rides over it with margin.
+      #
+      # DISPLAY-AWARE: a powered-down display stalls DWM composition, so
+      # PresentMon reads 0 with a perfectly healthy app (Jul 2026 DEVBOX:
+      # "turn off display after 15 min" looked exactly like a freeze for
+      # hours). `unless ... == 0` suppresses only when the display is KNOWN
+      # off — hosts not yet emitting kiosk_display_on keep old semantics.
       - alert: KioskAppFrozen
-        expr: (kiosk_app_up == 1) and on(instance) (presentmon_up == 0)
+        expr: ((kiosk_app_up == 1) and on(instance) (presentmon_up == 0)) unless on(instance) (kiosk_display_on == 0)
         for: 3m
         labels:
           severity: critical
         annotations:
           summary: "{{ $labels.instance }}: app alive but not rendering"
-          description: "kiosk_app_up=1 but presentmon_up=0 for 2m — process healthy but no frames presenting (crash-to-dialog, freeze, or GPU TDR aftermath)."
+          description: "kiosk_app_up=1 but presentmon_up=0 (display known on) — process healthy but no frames presenting (crash-to-dialog, freeze, or GPU TDR aftermath)."
 
       # Simpler backstop: not presenting at all (covers app-down or frozen).
+      # Same display-off suppression as above.
       - alert: KioskNotPresenting
-        expr: presentmon_up == 0
+        expr: (presentmon_up == 0) unless on(instance) (kiosk_display_on == 0)
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "{{ $labels.instance }} / {{ $labels.app }}: no frames for 5m"
+
+      # Display is dark and we did NOT ask for it (system controller
+      # /sleepDisplay sets kiosk_display_intended_off=1; /wakeDisplay clears
+      # it). Fires on power-policy regressions, GPU/EDID handoff failures,
+      # someone hitting the monitor button — anything unexpectedly dark.
+      - alert: KioskDisplayUnexpectedlyOff
+        expr: (kiosk_display_on == 0) unless on(instance) (kiosk_display_intended_off == 1)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: display off, not on purpose"
+          description: "kiosk_display_on=0 for 10m with no intentional /sleepDisplay recorded — power-policy regression, display handoff failure, or physical power-off."
+
+      # Config drift: the class-killer for the incident above. A kiosk must
+      # never idle its display or sleep itself. AC only — kiosks run on mains;
+      # a DC (battery) timeout on a dev laptop is not fleet-actionable.
+      - alert: KioskPowerPolicyDrift
+        expr: kiosk_display_timeout_seconds{power="ac"} > 0 or kiosk_sleep_timeout_seconds{power="ac"} > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: display/sleep idle timeout is set"
+          description: "Windows power policy will blank the display or sleep the box on idle ({{ $value }}s). Set both to Never (powercfg /change monitor-timeout-ac 0 / standby-timeout-ac 0) or capture + presentmon will freeze when it fires."
+
+      # PROMOTION NOTE (cloud rules.json): the offline/reconcile-stale alert
+      # should be suppressed when a shutdown was INTENTIONAL — the system
+      # controller writes kiosk_power_intent_timestamp_seconds{action=...} and
+      # holds metricsFlushSeconds before acting so the intent lands in
+      # Prometheus first. Suppress with:
+      #   unless on(instance) ((time() - max by (instance) (kiosk_power_intent_timestamp_seconds{action=~"shutdown|sleep"})) < 4*3600)

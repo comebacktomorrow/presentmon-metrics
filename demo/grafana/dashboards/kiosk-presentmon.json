@@ -1,5 +1,5 @@
 {
-  "title": "Kiosk APM — Frame Pacing & Screen Timeline",
+  "title": "Kiosk APM \u2014 Frame Pacing & Screen Timeline",
   "uid": "kiosk-presentmon",
   "schemaVersion": 39,
   "timezone": "browser",
@@ -9,7 +9,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -17,7 +20,10 @@
         "type": "dashboard"
       },
       {
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "enable": true,
         "expr": "kiosk_app_start_time_seconds{instance=~\"$instance\"} > $__from < $__to",
         "iconColor": "light-blue",
@@ -28,7 +34,10 @@
         "useValueForTime": true
       },
       {
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "enable": true,
         "expr": "ALERTS{alertname=\"KioskAppFrozen\", instance=~\"$instance\"}",
         "iconColor": "red",
@@ -45,50 +54,83 @@
       {
         "name": "environment",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info, environment)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       },
       {
         "name": "site",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info{environment=~\"$environment\"}, site)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       },
       {
         "name": "location",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info{site=~\"$site\"}, location)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       },
       {
         "name": "instance",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(kiosk_agent_info{location=~\"$location\"}, instance)",
         "includeAll": true,
         "multi": true,
         "refresh": 1,
-        "current": { "text": "All", "value": "$__all", "selected": true }
+        "current": {
+          "text": "All",
+          "value": "$__all",
+          "selected": true
+        }
       }
     ]
   },
   "panels": [
     {
       "type": "xzibit-kiosktimeline-panel",
-      "title": "$location screen — hover to scrub, correlate against the graphs below",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "title": "$location screen \u2014 hover to scrub, correlate against the graphs below",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "sites": "${site:csv}",
         "apiUrl": "http://localhost:8787",
@@ -98,79 +140,363 @@
       }
     },
     {
+      "type": "state-timeline",
+      "title": "Layer states \u2014 which layer broke first (reporting \u25b8 display \u25b8 app \u25b8 render)",
+      "description": "Observed state per layer, plus the derived kiosk:state (recording rule). Faults are observed\u2260intended at the highest explaining layer: planned states render blue, faults red/orange. Gaps = host not reporting.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (up{job=\"integrations/windows_exporter\", instance=~\"$instance\"})",
+          "legendFormat": "reporting \u00b7 {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "kiosk:display_on{instance=~\"$instance\"}",
+          "legendFormat": "display \u00b7 {{instance}}",
+          "refId": "B"
+        },
+        {
+          "expr": "kiosk:app_up{instance=~\"$instance\"}",
+          "legendFormat": "app \u00b7 {{instance}}",
+          "refId": "C"
+        },
+        {
+          "expr": "kiosk:presenting{instance=~\"$instance\"}",
+          "legendFormat": "presenting \u00b7 {{instance}}",
+          "refId": "D"
+        },
+        {
+          "expr": "kiosk:state{instance=~\"$instance\"}",
+          "legendFormat": "STATE \u00b7 {{instance}}",
+          "refId": "E"
+        }
+      ],
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "rowHeight": 0.85,
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "off",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "on",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "min": 0,
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "E"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "OK",
+                        "color": "green"
+                      },
+                      "1": {
+                        "text": "APP STOPPED (planned)",
+                        "color": "blue"
+                      },
+                      "2": {
+                        "text": "SCREEN ASLEEP (planned)",
+                        "color": "blue"
+                      },
+                      "10": {
+                        "text": "DARK \u2014 NOT INTENDED",
+                        "color": "orange"
+                      },
+                      "11": {
+                        "text": "APP CRASHED",
+                        "color": "red"
+                      },
+                      "12": {
+                        "text": "FROZEN",
+                        "color": "red"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "max",
+                "value": 12
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "title": "Presenting",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "mappings": [
-        { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
-      ] } },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        }
+      },
       "targets": [
-        { "expr": "presentmon_up{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+        {
+          "expr": "presentmon_up{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
+        }
       ]
     },
     {
-      "title": "Displayed FPS (rolling avg — exact, from the frame counter)",
+      "title": "Displayed FPS (rolling avg \u2014 exact, from the frame counter)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "none", "custom": { "axisLabel": "fps" } } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 6,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "axisLabel": "fps"
+          }
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "expr": "rate(presentmon_displayed_fps_hist_count{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} displayed fps" },
-        { "expr": "rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} presented fps" }
+        {
+          "expr": "rate(presentmon_displayed_fps_hist_count{instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}} displayed fps"
+        },
+        {
+          "expr": "rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{instance}} presented fps"
+        }
       ]
     },
     {
-      "title": "Frame time (ms) — p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
+      "title": "Frame time (ms) \u2014 p50 / p99 / p99.9 (lower = smoother; tail = stutter)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [
-        { "value": null, "color": "green" }, { "value": 33, "color": "red" }
-      ] } } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 15,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 33,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "expr": "1000 / histogram_quantile(0.50, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} p50" },
-        { "expr": "1000 / histogram_quantile(0.01, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} p99" },
-        { "expr": "1000 / histogram_quantile(0.001, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{instance}} p99.9" }
+        {
+          "expr": "1000 / histogram_quantile(0.50, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{instance}} p50"
+        },
+        {
+          "expr": "1000 / histogram_quantile(0.01, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{instance}} p99"
+        },
+        {
+          "expr": "1000 / histogram_quantile(0.001, sum by (le, instance) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{instance}} p99.9"
+        }
       ]
     },
     {
       "title": "App CPU / memory (context for a stutter or freeze)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "custom": { "axisLabel": "" } }, "overrides": [
-        { "matcher": { "id": "byRegexp", "options": ".*memory.*" }, "properties": [ { "id": "unit", "value": "bytes" } ] },
-        { "matcher": { "id": "byRegexp", "options": ".*CPU.*" }, "properties": [ { "id": "unit", "value": "percentunit" } ] }
-      ] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*memory.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*CPU.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
       "targets": [
-        { "expr": "rate(kiosk_app_cpu_seconds_total{instance=~\"$instance\"}[5m])", "legendFormat": "{{instance}} CPU" },
-        { "expr": "kiosk_app_working_set_bytes{instance=~\"$instance\"}", "legendFormat": "{{instance}} memory" }
+        {
+          "expr": "rate(kiosk_app_cpu_seconds_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} CPU"
+        },
+        {
+          "expr": "kiosk_app_working_set_bytes{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} memory"
+        }
       ]
     },
     {
       "title": "Dropped frames / min & drop ratio",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "expr": "increase(presentmon_frames_dropped_total{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}} dropped/min" },
-        { "expr": "100 * rate(presentmon_frames_dropped_total{instance=~\"$instance\"}[5m]) / rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[5m])", "legendFormat": "{{instance}} drop %" }
+        {
+          "expr": "increase(presentmon_frames_dropped_total{instance=~\"$instance\"}[1m])",
+          "legendFormat": "{{instance}} dropped/min"
+        },
+        {
+          "expr": "100 * rate(presentmon_frames_dropped_total{instance=~\"$instance\"}[5m]) / rate(presentmon_frame_time_ms_count{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} drop %"
+        }
       ]
     },
     {
       "title": "Displayed FPS distribution (heatmap)",
       "type": "heatmap",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}", "range": true, "refId": "A" }
+        {
+          "expr": "sum by (le) (rate(presentmon_displayed_fps_hist_bucket{instance=~\"$instance\"}[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A"
+        }
       ],
       "options": {
         "calculate": false,
         "cellGap": 1,
-        "color": { "mode": "scheme", "scheme": "Turbo", "steps": 64 },
-        "yAxis": { "unit": "none", "axisLabel": "fps", "decimals": 0 }
+        "color": {
+          "mode": "scheme",
+          "scheme": "Turbo",
+          "steps": 64
+        },
+        "yAxis": {
+          "unit": "none",
+          "axisLabel": "fps",
+          "decimals": 0
+        }
       }
     }
   ]
