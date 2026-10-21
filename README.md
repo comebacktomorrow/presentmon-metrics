@@ -101,7 +101,10 @@ kiosk) and drop the `frame-sim` service.
 |---|---|
 | `src/KioskPresentMonExporter/` | the exporter (.NET 8 Windows service) |
 | `src/KioskPresentMonExporter/PresentMonInterop.cs` | P/Invoke to PresentMonAPI2.dll |
-| `src/KioskPresentMonExporter/PresentMonSession.cs` | frame-query drain + GPU dynamic query |
+| `src/KioskPresentMonExporter/SwapChainMap.cs` | the `swapchain` label: stable ordinals per tracked process |
+| `tests/` | unit tests (`dotnet test tests/KioskPresentMonExporter.Tests`), run by CI |
+| `.github/workflows/build.yml` | CI: tests + publish on Windows; attaches the zip to releases |
+| `src/KioskPresentMonExporter/PresentMonSession.cs` | frame-query drain (frame time, displayed time, dropped, swapchain) |
 | `demo/` | self-contained Prometheus + Grafana + sample-data generator |
 | `grafana/` | dashboard JSON for the Git-Sync dashboards repo |
 | `docs/PLAN.md` | architecture, state, and the verify-on-Windows checklist |
