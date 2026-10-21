@@ -23,6 +23,13 @@ public sealed class ExporterOptions
     // semantics.
     public int IdleGraceSeconds { get; set; } = 120;
 
+    // Per-swapchain series (presentmon-metrics#1): one `swapchain` label value per swapchain
+    // the app presents through ("0", "1", ... first-seen), up to this many; the rest share
+    // "other". A 4-screen kiosk needs 4.
+    public int MaxSwapChains { get; set; } = 4;
+    // presentmon_swapchains counts the swapchains that presented within this many seconds.
+    public int SwapChainActiveSeconds { get; set; } = 30;
+
     // Which metric families to EMIT. `up` and frames_dropped_total are always on.
     // What actually ships to a backend is a separate concern (scrape/keep-list);
     // this controls what the exporter exposes at all. All default on.
@@ -69,6 +76,8 @@ internal sealed class PollerService : BackgroundService
     private readonly Counter _dropped;
     private readonly Gauge _up;
     private readonly Gauge _lastPresent;
+    private readonly Gauge _swapChains;
+    private readonly SwapChainMap _map;
 
     // Default buckets in ms. DENSE around common refresh rates (8.3=120Hz, 16.7=60Hz)
     // so the mass doesn't collapse into one wide bucket (bad histogram_quantile interp),
@@ -94,7 +103,12 @@ internal sealed class PollerService : BackgroundService
 
         _registry = Metrics.NewCustomRegistry();
         var f = Metrics.WithCustomRegistry(_registry);
+        // `up` and the swapchain count are per app; every per-frame series is per swapchain too
+        // (presentmon-metrics#1), so a multi-screen app's rates aren't multiplied by its screen
+        // count and one frozen screen shows. `sum without (swapchain)` gives the old totals.
         var labels = new[] { "app" };
+        var perSwapChain = new[] { "app", "swapchain" };
+        _map = new SwapChainMap(_opt.MaxSwapChains);
 
         var frameBuckets = (_opt.Metrics.FrameTimeBucketsMs is { Length: > 0 } fb) ? fb : DefaultFrameTimeBuckets;
         var fpsBuckets   = (_opt.Metrics.FpsBuckets is { Length: > 0 } pb) ? pb : DefaultFpsBuckets;
@@ -102,37 +116,49 @@ internal sealed class PollerService : BackgroundService
         _up = f.CreateGauge("presentmon_up",
             "1 if the target process is tracked and has presented within IdleGraceSeconds (static content presents nothing); 0 when frames stop past the grace or the process is gone (no grace).", labels);
         _dropped = f.CreateCounter("presentmon_frames_dropped_total",
-            "Frames dropped (presented but never displayed).", labels);
+            "Frames dropped (presented but never displayed).", perSwapChain);
         // Unix time of the last drained present. Initialized to SERVICE START,
         // not 0: on startup nothing has been seen yet, and time()-0 would read
         // as an eternity of stillness — a restart on static content must not
         // false-fire per-host freeze alerts (time() - this > threshold).
         _lastPresent = f.CreateGauge("presentmon_last_present_timestamp_seconds",
-            "Unix time the tracked process last presented a frame (initialized to service start). Alert on time() - this exceeding a per-host stillness budget.", labels);
+            "Unix time the tracked process last presented a frame on this swapchain (initialized to service start). Alert on time() - this exceeding a per-host stillness budget.", perSwapChain);
+        _swapChains = f.CreateGauge("presentmon_swapchains",
+            "Swapchains (one per screen, for a multi-screen app) that presented within SwapChainActiveSeconds.", labels);
         if (_opt.Metrics.FrameTimeMs)
             _frameTime = f.CreateHistogram("presentmon_frame_time_ms",
                 "CPU frame time per frame (ms).",
-                new HistogramConfiguration { Buckets = frameBuckets, LabelNames = labels });
+                new HistogramConfiguration { Buckets = frameBuckets, LabelNames = perSwapChain });
         if (_opt.Metrics.DisplayedTimeMs)
             _displayedTime = f.CreateHistogram("presentmon_displayed_time_ms",
                 "On-screen interval per displayed frame (ms).",
-                new HistogramConfiguration { Buckets = frameBuckets, LabelNames = labels });
+                new HistogramConfiguration { Buckets = frameBuckets, LabelNames = perSwapChain });
         if (_opt.Metrics.DisplayedFpsHist)
             _displayedFpsHist = f.CreateHistogram("presentmon_displayed_fps_hist",
                 "Distribution of instantaneous displayed fps (1000/displayed_time) per frame; render as a heatmap.",
-                new HistogramConfiguration { Buckets = fpsBuckets, LabelNames = labels });
+                new HistogramConfiguration { Buckets = fpsBuckets, LabelNames = perSwapChain });
         _log.LogInformation("emitting: frame_time_ms={Ft} displayed_time_ms={Dt} displayed_fps_hist={Fh}",
             _opt.Metrics.FrameTimeMs, _opt.Metrics.DisplayedTimeMs, _opt.Metrics.DisplayedFpsHist);
 
         // Publish every enabled series at zero up front so "no frames yet" / "no drops"
         // reads as 0, not absent — otherwise increase()/rate() return No Data and
         // panels/alerts break until the first event.
+        // Swapchain "0" exists from the start (a single-screen app only ever has "0"); others
+        // appear as they first present.
         _up.WithLabels(_app).Set(0);
-        _lastPresent.WithLabels(_app).Set(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        _dropped.WithLabels(_app).Inc(0);
-        _frameTime?.WithLabels(_app);
-        _displayedTime?.WithLabels(_app);
-        _displayedFpsHist?.WithLabels(_app);
+        _swapChains.WithLabels(_app).Set(0);
+        PublishSwapChain("0", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+    }
+
+    // Every series of one swapchain at zero, its last-present at `since`, so a new swapchain
+    // (or "no frames yet") reads 0 rather than absent.
+    private void PublishSwapChain(string sc, long since)
+    {
+        _lastPresent.WithLabels(_app, sc).Set(since);
+        _dropped.WithLabels(_app, sc).Inc(0);
+        _frameTime?.WithLabels(_app, sc);
+        _displayedTime?.WithLabels(_app, sc);
+        _displayedFpsHist?.WithLabels(_app, sc);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -142,6 +168,9 @@ internal sealed class PollerService : BackgroundService
         _log.LogInformation("Exposing /metrics on :{Port}, tracking '{App}'", _opt.ListenPort, _app);
 
         using var pm = new PresentMonSession(_opt.FrameBatchSize);
+        if (!pm.HasSwapChain)
+            _log.LogWarning("This PresentMon does not report swapchain addresses: every frame is swapchain \"0\"");
+        var published = new HashSet<string> { "0" };
 
         uint currentPid = 0;   // the PID we're currently tracking among name matches
         int unproductive = 0;  // consecutive zero-frame cycles on currentPid
@@ -159,33 +188,44 @@ internal sealed class PollerService : BackgroundService
                     currentPid = 0;
                     lastFrameUtc = DateTime.MinValue;
                     _up.WithLabels(_app).Set(0);
+                    _swapChains.WithLabels(_app).Set(0);
                 }
                 else
                 {
                     // If our tracked PID vanished (or first run), start on the first match.
                     if (Array.IndexOf(candidates, currentPid) < 0) { currentPid = candidates[0]; unproductive = 0; }
                     bool retracked = pm.EnsureTracking(currentPid);
+                    _map.Track(currentPid);
+                    var presented = new HashSet<string>();
 
                     int drained = pm.DrainFrames(currentPid, frame =>
                     {
+                        var sc = _map.Label(frame.SwapChain);
+                        if (published.Add(sc)) PublishSwapChain(sc, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                        presented.Add(sc);
                         if (IsSane(frame.FrameTimeMs))
-                            _frameTime?.WithLabels(_app).Observe(frame.FrameTimeMs);
+                            _frameTime?.WithLabels(_app, sc).Observe(frame.FrameTimeMs);
                         if (frame.Dropped)
                         {
-                            _dropped.WithLabels(_app).Inc();
+                            _dropped.WithLabels(_app, sc).Inc();
                         }
                         else if (IsSane(frame.DisplayedTimeMs) && frame.DisplayedTimeMs > 0)
                         {
-                            _displayedTime?.WithLabels(_app).Observe(frame.DisplayedTimeMs);
-                            _displayedFpsHist?.WithLabels(_app).Observe(1000.0 / frame.DisplayedTimeMs);
+                            _displayedTime?.WithLabels(_app, sc).Observe(frame.DisplayedTimeMs);
+                            _displayedFpsHist?.WithLabels(_app, sc).Observe(1000.0 / frame.DisplayedTimeMs);
                         }
                     });
 
-                    if (drained > 0)
+                    var nowUtc = DateTime.UtcNow;
+                    if (drained > 0) lastFrameUtc = nowUtc;
+                    // Per swapchain: one screen that stops presenting goes stale on its own,
+                    // while `up` (any swapchain) stays 1.
+                    foreach (var sc in presented)
                     {
-                        lastFrameUtc = DateTime.UtcNow;
-                        _lastPresent.WithLabels(_app).Set(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                        _map.Seen(sc, nowUtc);
+                        _lastPresent.WithLabels(_app, sc).Set(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                     }
+                    _swapChains.WithLabels(_app).Set(_map.Active(nowUtc, TimeSpan.FromSeconds(Math.Max(1, _opt.SwapChainActiveSeconds))));
                     bool withinGrace = _opt.IdleGraceSeconds > 0
                         && lastFrameUtc != DateTime.MinValue
                         && (DateTime.UtcNow - lastFrameUtc).TotalSeconds <= _opt.IdleGraceSeconds;
@@ -208,6 +248,7 @@ internal sealed class PollerService : BackgroundService
             {
                 _log.LogError(ex, "Poll cycle failed");
                 _up.WithLabels(_app).Set(0);
+                _swapChains.WithLabels(_app).Set(0);
             }
 
             await Task.Delay(_opt.PollIntervalMs, stoppingToken);
