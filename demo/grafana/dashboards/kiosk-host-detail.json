@@ -25,7 +25,7 @@
     {
       "type": "link",
       "title": "Visual Timeline",
-      "url": "https://kiosk-timeline.xzibitapps.workers.dev/app?k=d6210121f591954d5bf4b28376e3e15576e5702f540f6117",
+      "url": "https://kiosk-timeline.xzibitapps.workers.dev/app",
       "icon": "external link",
       "targetBlank": true,
       "keepTime": true,
