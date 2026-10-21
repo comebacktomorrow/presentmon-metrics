@@ -2,11 +2,13 @@ using static KioskPresentMonExporter.PresentMonInterop;
 
 namespace KioskPresentMonExporter;
 
-// One raw per-frame record pulled from the frame query.
-public readonly record struct FrameRecord(double FrameTimeMs, double DisplayedTimeMs, bool Dropped);
+// One raw per-frame record pulled from the frame query. SwapChain is the swapchain's address
+// (0 when this PresentMon can't report it): a kiosk driving several screens presents through
+// one swapchain per screen (presentmon-metrics#1).
+public readonly record struct FrameRecord(double FrameTimeMs, double DisplayedTimeMs, bool Dropped, ulong SwapChain);
 
 // Bridges the PresentMon SDK frame query to the exporter. We drain the per-frame
-// stream (CPU_FRAME_TIME, DISPLAYED_TIME, DROPPED_FRAMES with PM_STAT_NONE) and
+// stream (CPU_FRAME_TIME, DISPLAYED_TIME, DROPPED_FRAMES, SWAP_CHAIN_ADDRESS with PM_STAT_NONE) and
 // feed each frame into Prometheus histograms + counters. Cumulative, so per-minute
 // scraping loses nothing and Grafana can compute any quantile over any window.
 internal sealed class PresentMonSession : IDisposable
@@ -17,6 +19,7 @@ internal sealed class PresentMonSession : IDisposable
         PM_METRIC.PM_METRIC_CPU_FRAME_TIME,   // 0
         PM_METRIC.PM_METRIC_DISPLAYED_TIME,   // 1
         PM_METRIC.PM_METRIC_DROPPED_FRAMES,   // 2
+        PM_METRIC.PM_METRIC_SWAP_CHAIN_ADDRESS, // 3 (uint64, not double)
     };
 
     private readonly uint _batchSize;
@@ -28,6 +31,11 @@ internal sealed class PresentMonSession : IDisposable
     private uint _frameStride;              // bytes per frame record
     private long[] _frameOffsets = Array.Empty<long>();
     private byte[] _frameBuf = Array.Empty<byte>();
+    private int _metricCount;
+
+    // False when this PresentMon refused the swapchain element: every frame then reads
+    // SwapChain = 0, i.e. one series per app, as before presentmon-metrics#1.
+    public bool HasSwapChain => _metricCount > 3;
 
     public PresentMonSession(uint batchSize)
     {
@@ -37,13 +45,17 @@ internal sealed class PresentMonSession : IDisposable
         if (st != PM_STATUS.PM_STATUS_SUCCESS)
             throw new InvalidOperationException($"pmOpenSession failed: {st}");
 
-        RegisterFrameQuery();
+        if (!TryRegisterFrameQuery(FrameMetrics.Length, out var withSwapChain)
+            && !TryRegisterFrameQuery(3, out _))
+            throw new InvalidOperationException($"pmRegisterFrameQuery failed: {withSwapChain}");
     }
 
-    private void RegisterFrameQuery()
+    // Register the frame query over the first `count` FrameMetrics; false (and the status) if
+    // PresentMon refused it.
+    private bool TryRegisterFrameQuery(int count, out PM_STATUS status)
     {
-        var elements = new PM_QUERY_ELEMENT[FrameMetrics.Length];
-        for (int i = 0; i < FrameMetrics.Length; i++)
+        var elements = new PM_QUERY_ELEMENT[count];
+        for (int i = 0; i < count; i++)
             elements[i] = new PM_QUERY_ELEMENT
             {
                 metric = FrameMetrics[i],
@@ -52,15 +64,16 @@ internal sealed class PresentMonSession : IDisposable
                 arrayIndex = 0,
             };
 
-        var st = pmRegisterFrameQuery(_session, out _frameQuery, elements,
+        status = pmRegisterFrameQuery(_session, out _frameQuery, elements,
             (ulong)elements.Length, out _frameStride);
-        if (st != PM_STATUS.PM_STATUS_SUCCESS)
-            throw new InvalidOperationException($"pmRegisterFrameQuery failed: {st}");
+        if (status != PM_STATUS.PM_STATUS_SUCCESS) return false;
         if (_frameStride == 0)
             throw new InvalidOperationException("pmRegisterFrameQuery returned blobSize 0");
 
+        _metricCount = count;
         _frameOffsets = elements.Select(e => (long)e.dataOffset).ToArray();
         _frameBuf = new byte[_frameStride * _batchSize];
+        return true;
     }
 
     // Point the query at a pid; re-tracks on change (self-heals on app restart).
@@ -93,7 +106,8 @@ internal sealed class PresentMonSession : IDisposable
                 double ft = BitConverter.ToDouble(_frameBuf, (int)(b + _frameOffsets[0]));
                 double dt = BitConverter.ToDouble(_frameBuf, (int)(b + _frameOffsets[1]));
                 double dr = BitConverter.ToDouble(_frameBuf, (int)(b + _frameOffsets[2]));
-                onFrame(new FrameRecord(ft, dt, dr >= 0.5));
+                ulong sc = _metricCount > 3 ? BitConverter.ToUInt64(_frameBuf, (int)(b + _frameOffsets[3])) : 0;
+                onFrame(new FrameRecord(ft, dt, dr >= 0.5, sc));
                 total++;
             }
 

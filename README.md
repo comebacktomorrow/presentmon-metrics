@@ -37,14 +37,25 @@ restarts.
 
 | Metric | Type | Meaning |
 |---|---|---|
-| `presentmon_up` | gauge | 1 = target tracked & producing frames, 0 = missing/idle |
+| `presentmon_up` | gauge | 1 = target tracked & producing frames (on any swapchain), 0 = missing/idle |
+| `presentmon_swapchains` | gauge | swapchains (one per screen, for a multi-screen app) that presented within `SwapChainActiveSeconds` (30) |
+| `presentmon_last_present_timestamp_seconds` | gauge | unix time this swapchain last presented (initialized to service start) — per-screen freeze checks |
 | `presentmon_displayed_time_ms` | histogram | on-screen interval per displayed frame (ms) — the smoothness signal |
 | `presentmon_frame_time_ms` | histogram | CPU frame time per frame (ms) — diagnostic (CPU jitter vs display cadence) |
 | `presentmon_displayed_fps_hist` | histogram | instantaneous displayed fps per frame, fps-bucketed — render as a heatmap |
-| `presentmon_displayed_fps` | gauge | glanceable instantaneous fps (jittery; `rate()` of a histogram `_count` is authoritative) |
 | `presentmon_frames_dropped_total` | counter | frames dropped (presented, never displayed) |
 
-All carry an `app` label. `instance`/host come from the Prometheus scrape config.
+All carry an `app` label. Every per-frame series (the three histograms, `frames_dropped_total`)
+and `last_present_timestamp_seconds` also carry **`swapchain`** (presentmon-metrics#1): an app
+driving several screens presents through one swapchain per screen, and merged into one series
+its rates are multiplied by the screen count, its quantiles mix screens, and one frozen screen
+hides behind the others. Values are small stable ordinals, `"0"`, `"1"`, ... in first-seen order
+for the tracked process, starting again when the process restarts (the raw address changes
+every restart and would mint new series), capped at `MaxSwapChains` (4); the rest share
+`"other"`. A single-screen app shows only `swapchain="0"`. `sum without (swapchain)` gives the
+whole app; add `by (swapchain)` for per-screen panels and alerts. `up` and `swapchains` stay
+per app. A PresentMon that can't report swapchain addresses gives every frame `"0"` (logged at
+start). `instance`/host come from the Prometheus scrape config.
 
 Frame **counts** come free from the histogram `_count` fields — no separate
 counters: presented = `presentmon_frame_time_ms_count`, displayed =
@@ -90,12 +101,21 @@ kiosk) and drop the `frame-sim` service.
 |---|---|
 | `src/KioskPresentMonExporter/` | the exporter (.NET 8 Windows service) |
 | `src/KioskPresentMonExporter/PresentMonInterop.cs` | P/Invoke to PresentMonAPI2.dll |
-| `src/KioskPresentMonExporter/PresentMonSession.cs` | frame-query drain + GPU dynamic query |
+| `src/KioskPresentMonExporter/SwapChainMap.cs` | the `swapchain` label: stable ordinals per tracked process |
+| `tests/` | unit tests (`dotnet test tests/KioskPresentMonExporter.Tests`), run by CI |
+| `.github/workflows/build.yml` | CI: tests + publish on Windows; attaches the zip to releases |
+| `src/KioskPresentMonExporter/PresentMonSession.cs` | frame-query drain (frame time, displayed time, dropped, swapchain) |
 | `demo/` | self-contained Prometheus + Grafana + sample-data generator |
 | `grafana/` | dashboard JSON for the Git-Sync dashboards repo |
 | `docs/PLAN.md` | architecture, state, and the verify-on-Windows checklist |
 
-## Build & deploy (on a Windows box)
+## Build & deploy
+
+GitHub Actions (`.github/workflows/build.yml`, windows-latest) runs the unit tests and the
+publish below on every PR and push to main, uploading `presentmon-metrics-win-x64.zip` as an
+artifact; **publishing a release attaches the zip and its `.sha256`** to it. That zip and hash
+are what kiosk-presentmon's `exporterVersion` / `exporterSha256` pin. To build by hand, on a
+Windows box:
 
 ```powershell
 # Self-contained single-file exe — no .NET runtime needed on the target
@@ -114,7 +134,8 @@ sc.exe start presentmon-metrics
 ```
 
 Config via `appsettings.json` (or `Exporter__*` env vars / `--Exporter:...` args):
-`TargetProcessName` (no `.exe`) or `TargetProcessId`, `ListenPort`, `PollIntervalMs`.
+`TargetProcessName` (no `.exe`) or `TargetProcessId`, `ListenPort`, `PollIntervalMs`,
+`IdleGraceSeconds` (120), `MaxSwapChains` (4), `SwapChainActiveSeconds` (30).
 
 **Which metrics to emit** (`up` and `frames_dropped_total` are always on):
 
